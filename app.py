@@ -296,13 +296,14 @@ page = selected_option
 if page == "资产看板":
     st.subheader("🏠 资产总览")
 
-    # 获取数据
+    # 1. 获取所有基础数据
     portfolio_df = db.get_portfolio_summary()
-    total_invested = db.get_total_invested()
-    cash_balance = db.get_cash_balance()  # 新增：获取浮存金
+    total_invested_funds = db.get_total_invested()  # 从资金流水表获取的真实本金
+    cash_balance = db.get_cash_balance()  # 实时浮存金
 
-    # 1. 计算持仓市值 (Stock only for realtime, Option use Cost or 0)
+    # 2. 计算最新的持仓市值
     market_value_total = 0
+    total_holdings_cost = 0  # 纯持仓的成本
 
     if not portfolio_df.empty:
         if 'last_update' not in st.session_state:
@@ -311,20 +312,14 @@ if page == "资产看板":
             mkt_values = []
 
             for i, row in portfolio_df.iterrows():
-                # 只有股票才去查价，期权暂时用成本价或0代替，避免接口报错
+                # 只有股票查价，期权用0或成本价
                 if row['Type'] == 'STOCK':
                     price = get_realtime_price(row['Raw Symbol'])
                     if price is None: price = 0
                 else:
-                    # 期权暂不支持实时价，此处假设现价=成本价(未实现盈亏0)或者设为0
-                    # 为了不让总资产在买入期权瞬间暴跌(如果设为0)，暂且用成本价估算
-                    # 或者提示用户手动更新? 简单起见，期权市值暂按0处理（保守），或者按 Avg Cost (乐观)
-                    # 这里选用：期权按 0 计算市值（视为消耗品），或者显示 N/A
-                    # 改良：如果找不到价格，就用0，这样总资产=现金+股票。期权价值忽略(或者后续支持)
                     price = 0
 
                 current_prices.append(price)
-                # 市值 = 价格 * 数量 * 乘数
                 val = price * row['Quantity'] * row['Multiplier']
                 mkt_values.append(val)
                 p_bar.progress((i + 1) / len(portfolio_df))
@@ -338,20 +333,42 @@ if page == "资产看板":
             portfolio_df = st.session_state['portfolio_cache']
 
         market_value_total = portfolio_df['Market Value'].sum()
+        total_holdings_cost = portfolio_df['Total Cost'].sum()
 
-    # 2. 核心公式：总资产 = 股票持仓市值 + 现金余额 (期权市值暂忽略，现金已扣除期权权利金)
-    total_asset = market_value_total + cash_balance
-    total_pnl = total_asset - total_invested
-    ret_rate = (total_pnl / total_invested * 100) if total_invested != 0 else 0
+    # ================= 核心修正：智能收益率计算 =================
 
-    # 自动保存快照
-    db.save_daily_snapshot(date.today().strftime('%Y-%m-%d'), total_asset, total_invested)
+    # 场景 A: 标准会计模式 (你录入了入金记录)
+    if total_invested_funds > 0:
+        # 总资产 = 持仓市值 + 现金 (现金可能是负的，如果透支买股)
+        final_total_asset = market_value_total + cash_balance
+        final_invested = total_invested_funds
+        final_pnl = final_total_asset - final_invested
+        calc_mode_desc = "基于账户总权益 (Asset based)"
+
+    # 场景 B: 偷懒模式 (没录入入金，或者入金被出金抵消了)
+    # 此时回退到“只看持仓盈亏”，忽略现金流
+    else:
+        final_total_asset = market_value_total
+        final_invested = total_holdings_cost
+        final_pnl = market_value_total - total_holdings_cost
+        # 如果连持仓都没有，避免除以0
+        if final_invested == 0: final_invested = 1
+        calc_mode_desc = "仅基于持仓涨跌 (Holdings based)"
+
+    # 计算收益率
+    ret_rate = (final_pnl / final_invested * 100)
+
+    # 自动保存快照 (使用修正后的总资产)
+    db.save_daily_snapshot(date.today().strftime('%Y-%m-%d'), final_total_asset, final_invested)
 
     # 3. 顶部 KPI 卡片
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("总资产", f"${total_asset:,.0f}")
-    c2.metric("浮存金 (Cash)", f"${cash_balance:,.0f}", help="包含融资部分(负数)")
-    c3.metric("总收益", f"${total_pnl:,.0f}", delta_color="normal")
+    c1.metric("总资产", f"${final_total_asset:,.0f}", help=f"计算模式: {calc_mode_desc}")
+
+    # 显示浮存金 (如果是偷懒模式，现金可能是负数，但这不影响上面的总资产显示)
+    c2.metric("浮存金", f"${cash_balance:,.0f}", help="可用资金")
+
+    c3.metric("总收益", f"${final_pnl:,.0f}", delta_color="normal")
     c4.metric("总收益率", f"{ret_rate:.2f}%", delta=f"{ret_rate:.2f}%")
     st.divider()
 
