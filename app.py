@@ -18,41 +18,36 @@ st.markdown("""
     .stDataFrame { text-align: center !important; }
     div[data-testid="stDataEditor"] div[role="grid"] { text-align: center !important; }
 
-    /* ================= 2. 极简侧边栏 (Icon Only) ================= */
-    /* 锁定侧边栏宽度 */
+    /* ================= 2. 极简固定侧边栏 (Gemini Style) ================= */
+
+    /* 1. 锁定侧边栏宽度 */
     section[data-testid="stSidebar"] {
         min-width: 80px !important;
         max-width: 80px !important;
     }
 
-    /* 隐藏 Radio 组件默认的圆圈 */
-    section[data-testid="stSidebar"] div[role="radiogroup"] label > div:first-child {
+    /* 2. 隐藏侧边栏原本的折叠按钮 (X) 和 顶部的装饰条 */
+     div[data-testid="collapsedControl"] {
         display: none;
     }
-
-    /* 调整图标容器样式：居中、大字体 */
-    section[data-testid="stSidebar"] div[role="radiogroup"] label {
-        padding: 15px 0 !important;
-        margin: 0 !important;
-        justify-content: center !important; /* 水平居中 */
-    }
-
-    section[data-testid="stSidebar"] div[role="radiogroup"] label p {
-        font-size: 32px !important; /* 图标放大 */
-        text-align: center;
-    }
-
-    /* 选中状态稍微变个背景色 (可选) */
-    section[data-testid="stSidebar"] div[role="radiogroup"] label[data-checked="true"] {
-        background-color: rgba(128, 128, 128, 0.1);
-        border-radius: 10px;
-    }
-
-    /* 隐藏侧边栏原本的内边距，让图标靠上 */
+    /* 3. 关键：去除侧边栏内部容器的所有内边距，实现“满宽”效果 */
     section[data-testid="stSidebar"] .block-container {
+        padding: 0 !important;
+        padding-top: 2rem !important; /* 顶部留白 */
+        margin: 0 !important;
+        max-width: 60px !important;
+    }
+
+    /* 3. 去掉侧边栏右侧的边框线，让它更像一个整体 (可选) */
+   section[data-testid="stSidebar"] .block-container {
         padding-top: 2rem;
-        padding-left: 0.5rem;
-        padding-right: 0.5rem;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+        margin: 0 !important;
+    }
+    
+    header[data-testid="stHeader"] {
+        # display: none;
     }
 
     /* ================= 3. 弹窗与悬浮按钮 ================= */
@@ -236,14 +231,48 @@ def show_add_modal():
             st.info("回收站是空的")
 
 
-# ================= 4. 侧边栏 (极简版) =================
 with st.sidebar:
-    # 只显示图标
-    selected_icon = st.radio("Nav", ["🏠", "📅"], label_visibility="collapsed")
+    selected_option = option_menu(
+        menu_title=None,
+        options=["资产看板", "收益日历"],
+        # 使用 Bootstrap Icons:
+        # 'grid-fill' -> 类似 Gemini 的应用方块
+        # 'calendar-range' -> 日历
+        icons=["grid-fill", "calendar-range"],
+        default_index=0,
+        orientation="vertical",
+        styles={
+            "container": {
+                "padding": "5px !important", # 容器微调
+                "background-color": "transparent"
+            },
+            "icon": {
+                "color": "#444746", # Google 深灰
+                "font-size": "24px", # 图标大小
+                "margin": "0px"      # 强制去掉图标边距
+            },
+            "nav-link": {
+                "font-size": "0px", # 隐藏文字
+                "text-align": "center",
+                "margin": "8px 0px", # 按钮垂直间距
+                "padding": "0px",    # 内部padding清零，靠flex居中
+                "height": "48px",    # 固定高度，接近正方形
+                "width": "100%",     # 填满侧边栏宽度
+                "border-radius": "12px", # 圆角矩形
+                "display": "flex",   # 开启 Flex 布局
+                "align-items": "center",     # 垂直居中
+                "justify-content": "center", # 水平居中
+                "--hover-color": "#f0f2f5"   # 悬停浅灰
+            },
+            "nav-link-selected": {
+                "background-color": "#d3e3fd", # 选中背景：Google 浅蓝 (Gemini风格) 或改成 #e0e0e0 (纯灰)
+                "color": "#041e49",            # 选中图标色
+            },
+        }
+    )
 
-# 逻辑映射：将图标转回原来的页面名称
-# 这样你后面的 if page == "资产看板": 代码完全不用动
-page = "资产看板" if selected_icon == "🏠" else "收益日历"
+# 逻辑映射
+page = selected_option
 
 # ================= 5. 主页面 =================
 if page == "资产看板":
