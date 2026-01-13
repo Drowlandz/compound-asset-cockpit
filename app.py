@@ -49,6 +49,44 @@ st.markdown("""
     header[data-testid="stHeader"] {
         # display: none;
     }
+    
+    /* ================= Calendar & Chart Styles (New) ================= */
+    
+    /* 1. 顶部筛选丸 (Pills) */
+    .filter-pills { display: flex; gap: 8px; margin-bottom: 15px; overflow-x: auto; padding-bottom: 5px; }
+    .filter-pill {
+        padding: 5px 15px; border-radius: 15px; background: #f0f2f6; color: #555; 
+        font-size: 13px; cursor: pointer; border: 1px solid transparent; transition: all 0.2s; white-space: nowrap;
+    }
+    .filter-pill:hover { background: #e0e0e0; }
+    .filter-pill.active { background: #fff; border-color: #ddd; color: #000; font-weight: bold; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+
+    /* 2. 日历格子样式 */
+    .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 10px; }
+    
+    .cal-header-cell { text-align: center; color: #999; font-size: 12px; padding-bottom: 5px; }
+    
+    .cal-cell {
+        aspect-ratio: 1/0.85; border-radius: 6px; background: #fff;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        font-size: 12px; position: relative; border: 1px solid #f9f9f9;
+    }
+    .cal-day-num { font-size: 14px; color: #333; margin-bottom: 2px; font-weight: 500; }
+    .cal-val { font-size: 10px; font-weight: 500; zoom: 0.9; }
+    
+    /* 3. 颜色定义 (红涨绿跌, 浅底深字) */
+    .bg-up { background-color: #fff1f0 !important; border-color: #ffd6d6 !important; }
+    .text-up { color: #d93025 !important; }
+    
+    .bg-down { background-color: #e6f4ea !important; border-color: #ceead6 !important; }
+    .text-down { color: #1e8e3e !important; }
+    
+    .bg-gray { background-color: #f8f9fa !important; color: #ccc !important; }
+
+    /* 4. 周/月/年视图卡片 */
+    .period-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
+    .period-card { padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #eee; background: white; }
+    
 
     /* ================= 3. 弹窗与悬浮按钮 ================= */
     div[data-testid="stDialog"] div.stButton { position: static !important; width: auto !important; }
@@ -98,7 +136,45 @@ def get_realtime_price(symbol):
     return None
 
 
-# ================= 3. 弹窗逻辑 (新增期权Tab) =================
+def update_and_save_snapshot():
+    """强制重新计算当前净值并保存到数据库"""
+    # 1. 获取基础数据
+    portfolio_df = db.get_portfolio_summary()
+    total_invested_funds = db.get_total_invested()
+    cash_balance = db.get_cash_balance()
+
+    # 2. 计算持仓市值
+    market_value_total = 0
+    total_holdings_cost = 0
+
+    if not portfolio_df.empty:
+        # 这里为了速度，不显示进度条，直接计算
+        for _, row in portfolio_df.iterrows():
+            if row['Type'] == 'STOCK':
+                # 注意：这里做个容错，优先用 Raw Symbol，没有则用 Symbol
+                sym = row.get('Raw Symbol', row['Symbol'])
+                price = get_realtime_price(sym)
+                if price is None: price = 0
+            else:
+                price = 0  # 期权暂按0或成本计算
+
+            market_value_total += price * row['Quantity'] * row['Multiplier']
+            total_holdings_cost += row['Total Cost']
+
+    # 3. 计算总资产 (复用智能会计逻辑)
+    if total_invested_funds > 0:
+        final_total_asset = market_value_total + cash_balance
+        final_invested = total_invested_funds
+    else:
+        final_total_asset = market_value_total
+        final_invested = total_holdings_cost if total_holdings_cost > 0 else 1
+
+    # 4. 保存到数据库 (覆盖今日旧数据)
+    today_str = date.today().strftime('%Y-%m-%d')
+    db.save_daily_snapshot(today_str, final_total_asset, final_invested)
+
+    return final_total_asset, final_invested
+
 # ================= 3. 弹窗逻辑 (修复缩进 + 补全资金记录) =================
 @st.dialog("📝 操作中心")
 def show_add_modal():
@@ -358,7 +434,7 @@ if page == "资产看板":
     # 计算收益率
     ret_rate = (final_pnl / final_invested * 100)
 
-    # 自动保存快照 (使用修正后的总资产)
+    # 自动保存快照 (逻辑不变，只是确保每次刷新都保存)
     db.save_daily_snapshot(date.today().strftime('%Y-%m-%d'), final_total_asset, final_invested)
 
     # 3. 顶部 KPI 卡片
@@ -433,35 +509,221 @@ if page == "资产看板":
                 st.rerun()
 
 elif page == "收益日历":
-    st.subheader("📅 收益复盘")
+    st.subheader("📅 收益复盘 (USD)")
+    import calendar
+
     history_df = db.get_history_data()
+
     if not history_df.empty:
+        # --- 1. 数据清洗与计算 (修复版) ---
         history_df['date'] = pd.to_datetime(history_df['date'])
         history_df = history_df.sort_values('date')
+
+        # 计算当日盈亏 (Daily PnL)
         history_df['daily_profit'] = history_df['total_pnl'].diff().fillna(0)
+        # 第一天修正：如果只有一天，diff是NaN，直接用total_pnl
+        if len(history_df) >= 1:
+            history_df.iloc[0, history_df.columns.get_loc('daily_profit')] = history_df.iloc[0]['total_pnl']
 
-        # 简单处理：如果第一天数据，profit就等于pnl
-        if len(history_df) == 1: history_df['daily_profit'] = history_df['total_pnl']
+        # 计算累计收益率 (Total Return %) = 总盈亏 / 总投入
+        # 避免分母为0
+        history_df['total_cost_safe'] = history_df['total_cost'].replace(0, 1)
+        history_df['cum_pct'] = (history_df['total_pnl'] / history_df['total_cost_safe'] * 100).fillna(0)
 
-        history_df['daily_pct'] = (history_df['total_asset'].pct_change() * 100).fillna(0)
+        # 计算日度收益率 (Daily Return %) = 当日盈亏 / 昨日总资产
+        history_df['prev_asset'] = history_df['total_asset'].shift(1).fillna(history_df['total_cost'])  # 修复KeyError
+        history_df['prev_asset'] = history_df['prev_asset'].replace(0, 1)
+        history_df['daily_pct'] = (history_df['daily_profit'] / history_df['prev_asset'] * 100).fillna(0)
 
-        c_opt1, c_opt2 = st.columns([1, 5])
-        view_type = c_opt1.radio("显示单位", ["收益额 ($)", "收益率 (%)"])
-        target_col = 'daily_profit' if "收益额" in view_type else 'daily_pct'
+        # 时间维度
+        history_df['year'] = history_df['date'].dt.year
+        history_df['month'] = history_df['date'].dt.month
+        history_df['day'] = history_df['date'].dt.day
+        history_df['week'] = history_df['date'].dt.isocalendar().week
 
-        fig_line = px.line(history_df, x='date', y='total_pnl', title="累计盈亏曲线", markers=True)
-        st.plotly_chart(fig_line, use_container_width=True)
+        # ==========================================
+        # 模块 A: 收益率曲线 (优先展示)
+        # ==========================================
+        with st.container(border=True):
+            c_chart_h1, c_chart_h2 = st.columns([1, 4], vertical_alignment="center")
+            c_chart_h1.markdown("#### 📈 趋势分析")
 
-        history_df['Month'] = history_df['date'].dt.to_period('M').astype(str)
-        monthly_data = history_df.groupby('Month')[target_col].sum().reset_index()
-        monthly_data['color'] = monthly_data[target_col].apply(lambda x: '#ff4b4b' if x < 0 else '#00c853')
+            # 曲线图切换控制
+            with c_chart_h2:
+                # 把切换按钮挤到右边
+                _, c_sub = st.columns([3, 1])
+                with c_sub:
+                    curve_metric = st.radio("Curve", ["累计收益率 %", "累计盈亏 $"], horizontal=True,
+                                            label_visibility="collapsed", key="curve_select")
 
-        st.write("#### 月度表现")
-        fig_bar = go.Figure(
-            go.Bar(x=monthly_data['Month'], y=monthly_data[target_col], marker_color=monthly_data['color']))
-        st.plotly_chart(fig_bar, use_container_width=True)
+            # 绘图数据准备
+            if "收益率" in curve_metric:
+                plot_y = 'cum_pct'
+                y_title = "累计收益率 (%)"
+                hover_temp = "日期: %{x}<br>收益率: %{y:.2f}%"
+                line_color = '#2962ff'  # 蓝色曲线
+            else:
+                plot_y = 'total_pnl'
+                y_title = "累计盈亏 ($)"
+                hover_temp = "日期: %{x}<br>盈亏: $%{y:,.0f}"
+                line_color = '#ff4b4b'  # 红色曲线
+
+            # 绘制 Plotly 曲线
+            fig = px.line(history_df, x='date', y=plot_y)
+            fig.update_traces(line_color=line_color, line_width=2.5, hovertemplate=hover_temp)
+            fig.update_layout(
+                margin=dict(l=10, r=10, t=10, b=10),
+                height=280,
+                xaxis_title="",
+                yaxis_title="",
+                showlegend=False,
+                hovermode="x unified",
+                plot_bgcolor='rgba(0,0,0,0)',
+                xaxis=dict(showgrid=False),
+                yaxis=dict(showgrid=True, gridcolor='#eee')
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        # ==========================================
+        # 模块 B: 收益日历 (仿参考图样式)
+        # ==========================================
+        st.write("")  # Spacer
+
+        # 1. 顶部筛选 (Mockup)
+        st.markdown("""
+            <div class="filter-pills">
+                <div class="filter-pill">本月</div>
+                <div class="filter-pill">近3月</div>
+                <div class="filter-pill active">本年</div>
+                <div class="filter-pill">全部</div>
+            </div>
+        """, unsafe_allow_html=True)
+
+        # 2. 控制栏
+        c_ctrl1, c_ctrl2 = st.columns([1, 2], vertical_alignment="center")
+        with c_ctrl1:
+            # 年份选择
+            years = sorted(history_df['year'].unique(), reverse=True)
+            sel_year = st.selectbox("Year", years, label_visibility="collapsed", key="cal_year")
+        with c_ctrl2:
+            # 视图与指标切换
+            sc1, sc2 = st.columns(2)
+            view_mode = sc1.radio("View", ["日", "周", "月", "年"], horizontal=True, label_visibility="collapsed",
+                                  key="cal_view")
+            cal_metric = sc2.radio("Metric", ["收益额", "收益率"], horizontal=True, label_visibility="collapsed",
+                                   key="cal_metric")
+
+        # 3. 渲染逻辑
+        is_pct_mode = (cal_metric == "收益率")
+        current_data = history_df[history_df['year'] == sel_year]
+
+
+        # 辅助样式函数
+        def get_style(val):
+            txt = f"{val:+.2f}%" if is_pct_mode else f"${val:+,.0f}"
+            if val == 0: return "bg-gray", txt
+            css = "bg-up text-up" if val > 0 else "bg-down text-down"
+            return css, txt
+
+
+        if current_data.empty:
+            st.info(f"{sel_year} 年暂无数据")
+
+        # --- 日视图 ---
+        elif view_mode == "日":
+            latest_month = current_data['month'].max()
+            months = sorted(current_data['month'].unique(), reverse=True)
+            sel_month = st.pills("月份", months, default=latest_month, selection_mode="single") or latest_month
+
+            # 准备数据
+            month_df = current_data[current_data['month'] == sel_month].set_index('day')
+            calendar.setfirstweekday(calendar.SUNDAY)
+            cal_matrix = calendar.monthcalendar(sel_year, sel_month)
+            weekdays = ["日", "一", "二", "三", "四", "五", "六"]
+
+            # 渲染表头
+            cols = st.columns(7)
+            for i, d in enumerate(weekdays):
+                cols[i].markdown(f"<div class='cal-header-cell'>{d}</div>", unsafe_allow_html=True)
+
+            # 渲染网格
+            html = '<div class="cal-grid">'
+            for week in cal_matrix:
+                for day in week:
+                    if day == 0:
+                        html += '<div class="cal-cell" style="background:transparent; border:none;"></div>'
+                    else:
+                        val = 0
+                        if day in month_df.index:
+                            val = month_df.loc[day]['daily_pct'] if is_pct_mode else month_df.loc[day]['daily_profit']
+
+                        css, txt = get_style(val)
+                        # 如果没有交易数据 (val=0)，显示灰色
+                        if val == 0 and day not in month_df.index:
+                            html += f'<div class="cal-cell"><div class="cal-day-num" style="color:#ddd">{day}</div></div>'
+                        else:
+                            html += f'<div class="cal-cell {css}"><div class="cal-day-num">{day}</div><div class="cal-val">{txt}</div></div>'
+            html += '</div>'
+            st.markdown(html, unsafe_allow_html=True)
+
+        # --- 周视图 ---
+        elif view_mode == "周":
+            col = 'daily_profit'  # 周视图通常看金额汇总
+            weekly = current_data.groupby('week')[col].sum().sort_index(ascending=False)
+            html = '<div class="period-grid">'
+            for wk, val in weekly.items():
+                css, txt = get_style(val)  # 这里复用样式，注意如果是收益率模式，周度简单加总是错误的，建议周视图强制显示金额
+                # 强制周视图显示金额
+                if is_pct_mode:
+                    txt = "N/A"
+                else:
+                    txt = f"${val:+,.0f}"
+
+                html += f"""
+                <div class="period-card {css}">
+                    <div style="font-size:12px; color:#888;">第{wk}周</div>
+                    <div style="font-size:18px; font-weight:600; margin-top:5px;">{txt}</div>
+                </div>"""
+            html += '</div>'
+            st.markdown(html, unsafe_allow_html=True)
+            if is_pct_mode: st.caption("注：周视图暂只支持查看收益额")
+
+        # --- 月视图 ---
+        elif view_mode == "月":
+            monthly = current_data.groupby('month')['daily_profit'].sum()
+            html = '<div class="period-grid">'
+            for m in range(1, 13):
+                val = monthly.get(m, 0)
+                css, txt = "bg-gray", "-"
+                if val != 0:
+                    css = "bg-up text-up" if val > 0 else "bg-down text-down"
+                    txt = f"${val:+,.0f}"
+
+                html += f"""
+                <div class="period-card {css}">
+                    <div style="font-size:16px; font-weight:bold; margin-bottom:4px;">{m}月</div>
+                    <div style="font-size:13px;">{txt}</div>
+                </div>"""
+            html += '</div>'
+            st.markdown(html, unsafe_allow_html=True)
+
+        # --- 年视图 ---
+        elif view_mode == "年":
+            yearly = history_df.groupby('year')['daily_profit'].sum().sort_index(ascending=False)
+            html = '<div class="period-grid" style="grid-template-columns: repeat(2, 1fr);">'
+            for yr, val in yearly.items():
+                css = "bg-up text-up" if val > 0 else "bg-down text-down"
+                txt = f"${val:+,.0f}"
+                html += f"""
+                <div class="period-card {css}">
+                    <div style="font-size:24px; font-weight:bold;">{yr}</div>
+                    <div style="font-size:18px; margin-top:8px;">{txt}</div>
+                </div>"""
+            html += '</div>'
+            st.markdown(html, unsafe_allow_html=True)
+
     else:
-        st.warning("暂无历史数据")
+        st.warning("暂无历史数据，请积累几天数据后再来查看。")
 
 # ================= 6. 悬浮按钮 (终极修复版) =================
 st.markdown('<span id="fab-anchor"></span>', unsafe_allow_html=True)
