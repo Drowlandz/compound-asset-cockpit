@@ -99,6 +99,7 @@ def get_realtime_price(symbol):
 
 
 # ================= 3. 弹窗逻辑 (新增期权Tab) =================
+# ================= 3. 弹窗逻辑 (修复缩进 + 补全资金记录) =================
 @st.dialog("📝 操作中心")
 def show_add_modal():
     # 调整顺序：股票 -> 期权 -> 资金 -> 回收站
@@ -124,9 +125,9 @@ def show_add_modal():
                 st.success("已保存")
                 st.rerun()
 
-    # --- Tab 2: 期权 (新增) ---
+    # --- Tab 2: 期权 ---
     with tab2:
-        st.caption("💡 提示：期权合约乘数默认为 100 (美股标准)。交易金额 = 单价 x 张数 x 100")
+        st.caption("💡 提示：期权合约乘数默认为 100")
         with st.form("add_option_form"):
             c1, c2 = st.columns(2)
             o_date = c1.date_input("交易日期", date.today())
@@ -142,63 +143,80 @@ def show_add_modal():
             o_qty = c7.number_input("张数 (Contract)", 1.0, step=1.0)
 
             c8, c9 = st.columns(2)
-            o_price = c8.number_input("权利金单价 (Premium)", 0.0, step=0.1)
+            o_price = c8.number_input("权利金单价", 0.0, step=0.1)
             o_fee = c9.number_input("佣金", 0.0)
 
             if st.form_submit_button("提交期权交易", use_container_width=True):
-                # 构造一个易读的 Symbol 存入数据库
-                # 格式: NVDA 260115 C 150
-                exp_str = o_exp.strftime("%y%m%d")
-                short_type = "C" if o_type == "CALL" else "P"
-                # 这里存原始代码，在 get_portfolio 动态拼接，或者这里不拼，只存字段
-                # 为了兼容性，symbol 存正股代码，额外字段存期权信息
-
                 db.add_transaction(
                     date=o_date, symbol=o_sym, trans_type=o_side,
                     quantity=o_qty, price=o_price, fee=o_fee, note=f"Option {o_type} {o_strike}",
-                    asset_category='OPTION', multiplier=100,  # 关键：乘数100
+                    asset_category='OPTION', multiplier=100,
                     strike=o_strike, expiration=str(o_exp), option_type=o_type
                 )
                 st.success("期权交易已保存")
                 st.rerun()
 
-            # --- Tab 3: 资金管理 (专业版) ---
-            with tab3:
-                # 1. 模式选择 (下拉框 + 极简术语)
-                mode = st.selectbox("操作模式", ["资金流水", "余额校准"], label_visibility="collapsed")
+    # --- Tab 3: 资金管理 (修复：移出 Tab 2 内部，并增加历史记录) ---
+    with tab3:
+        mode = st.selectbox("操作模式", ["资金流水", "余额校准"], label_visibility="collapsed")
 
-                if mode == "资金流水":
-                    with st.form("fund_form"):
-                        f_date = st.date_input("日期", date.today())
-                        c1, c2 = st.columns(2)
-                        # 极简映射：DEPOSIT -> 入金, WITHDRAW -> 出金
-                        f_type = c1.selectbox("类型", ["DEPOSIT", "WITHDRAW"],
-                                              format_func=lambda x: "入金" if x == "DEPOSIT" else "出金")
-                        f_amount = c2.number_input("金额 ($)", 1000.0, step=100.0)
-                        f_note = st.text_input("备注", placeholder="选填")
+        # 1. 操作区域
+        if mode == "资金流水":
+            with st.form("fund_form"):
+                f_date = st.date_input("日期", date.today())
+                c1, c2 = st.columns(2)
+                f_type = c1.selectbox("类型", ["DEPOSIT", "WITHDRAW"],
+                                      format_func=lambda x: "入金" if x == "DEPOSIT" else "出金")
+                f_amount = c2.number_input("金额 ($)", 1000.0, step=100.0)
+                f_note = st.text_input("备注", placeholder="选填")
 
-                        if st.form_submit_button("提交", use_container_width=True):
-                            db.add_fund_flow(f_date, f_type, f_amount, f_note)
-                            st.success("已记录")
-                            st.rerun()
+                if st.form_submit_button("提交", use_container_width=True):
+                    db.add_fund_flow(f_date, f_type, f_amount, f_note)
+                    st.success("已记录")
+                    st.rerun()
 
-                else:  # 余额校准
-                    # 获取当前系统计算值
-                    curr_cash = db.get_cash_balance()
+        else:  # 余额校准
+            curr_cash = db.get_cash_balance()
+            with st.form("fix_balance_form"):
+                st.markdown(
+                    f"<div style='text-align:center; color:#888; font-size:12px; margin-bottom:10px;'>系统浮存金: <b>${curr_cash:,.2f}</b></div>",
+                    unsafe_allow_html=True)
 
-                    with st.form("fix_balance_form"):
-                        st.markdown(
-                            f"<div style='text-align:center; color:#888; font-size:12px; margin-bottom:10px;'>当前系统浮存金: <b>${curr_cash:,.2f}</b></div>",
-                            unsafe_allow_html=True)
+                c1, c2 = st.columns(2)
+                target_date = c1.date_input("校准日期", date.today())
+                target_val = c2.number_input("实际余额 ($)", value=float(curr_cash), step=100.0)
 
-                        c1, c2 = st.columns(2)
-                        target_date = c1.date_input("校准日期", date.today())
-                        target_val = c2.number_input("实际余额 ($)", value=float(curr_cash), step=100.0)
+                if st.form_submit_button("执行校准", type="primary", use_container_width=True):
+                    db.set_cash_balance(target_val, target_date)
+                    st.success(f"余额已校准为 ${target_val:,.2f}")
+                    st.rerun()
 
-                        if st.form_submit_button("执行校准", type="primary", use_container_width=True):
-                            db.set_cash_balance(target_val, target_date)
-                            st.success(f"余额已校准为 ${target_val:,.2f}")
-                            st.rerun()
+        # 2. 历史记录区域 (补回)
+        st.divider()
+        st.caption("📜 资金流水记录")
+        fund_df = db.get_fund_flows()
+        if not fund_df.empty:
+            edited_funds = st.data_editor(
+                fund_df,
+                column_config={
+                    "id": None, "date": "日期",
+                    "type": st.column_config.TextColumn("类型", width="small"),
+                    "amount": st.column_config.NumberColumn("金额", format="$%.2f"),
+                    "note": "备注"
+                },
+                hide_index=True, use_container_width=True, num_rows="dynamic", key="fund_editor_widget"
+            )
+            if st.session_state.get("fund_editor_widget"):
+                changes = st.session_state["fund_editor_widget"]
+                if changes.get("deleted_rows"):
+                    for idx in changes["deleted_rows"]:
+                        try:
+                            db.delete_fund_flow(fund_df.iloc[idx]['id'])
+                        except:
+                            pass
+                    st.rerun()
+        else:
+            st.info("暂无资金记录")
 
     # --- Tab 4: 回收站 ---
     with tab4:

@@ -336,3 +336,18 @@ def set_cash_balance(target_amount, date_str):
 
     # 5. 写入修正记录
     add_fund_flow(date_str, f_type, abs(diff), note)
+
+def get_fund_flows():
+    """获取所有资金流水记录"""
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql_query("SELECT * FROM funds ORDER BY date DESC, id DESC", conn)
+    conn.close()
+    return df
+
+def delete_fund_flow(fund_id):
+    """物理删除资金记录 (资金表结构简单，直接物理删除即可)"""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("DELETE FROM funds WHERE id = ?", (int(fund_id),))
+    conn.commit()
+    conn.close()
