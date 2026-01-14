@@ -238,9 +238,8 @@ def get_history_data():
     return df
 
 
-# --- 持仓计算 ---
 def get_portfolio_summary():
-    """获取持仓列表（含股票和期权）"""
+    """获取持仓列表（含股票和期权）- 升级版：增加持仓天数"""
     df = get_all_transactions(include_deleted=False)
     if df.empty: return pd.DataFrame()
 
@@ -248,14 +247,10 @@ def get_portfolio_summary():
     portfolio = {}
 
     for _, row in df.iterrows():
-        # 对于期权，Symbol 最好带上详情，防止不同期权混淆
-        # 如果是期权，Symbol 格式化为: NVDA 250620 C 120
         raw_sym = row['symbol']
         is_option = row.get('asset_category') == 'OPTION'
 
-        # 唯一标识符：如果是股票就是 Symbol，如果是期权，根据属性组合
         if is_option:
-            # 简单的期权唯一Key
             key = f"{raw_sym} {row['expiration']} {row['option_type']} {row['strike']}"
         else:
             key = raw_sym
@@ -266,46 +261,55 @@ def get_portfolio_summary():
                 'quantity': 0,
                 'total_cost': 0,
                 'multiplier': row.get('multiplier', 1),
-                'type': row.get('asset_category', 'STOCK')
+                'type': row.get('asset_category', 'STOCK'),
+                'first_buy_date': None  # 新增：首次买入日期
             }
 
-        # 计算逻辑
         multiplier = row.get('multiplier', 1)
 
         if row['type'] == 'BUY':
             portfolio[key]['quantity'] += row['quantity']
-            # 成本 = 单价 * 数量 * 乘数 + 费
             portfolio[key]['total_cost'] += (row['price'] * row['quantity'] * multiplier + row['fee'])
+
+            # 记录最早买入时间
+            if portfolio[key]['first_buy_date'] is None:
+                portfolio[key]['first_buy_date'] = row['date']
+
         elif row['type'] == 'SELL':
             if portfolio[key]['quantity'] > 0:
                 avg_cost = portfolio[key]['total_cost'] / portfolio[key]['quantity']
-                # 卖出减少成本
                 portfolio[key]['total_cost'] -= (avg_cost * row['quantity'])
                 portfolio[key]['quantity'] -= row['quantity']
 
+    # 清理已清仓的记录
     res = []
+    today = datetime.now().date()
+
     for key, data in portfolio.items():
         if data['quantity'] > 0.001:
             current_qty = data['quantity']
             total_c = data['total_cost']
-            # 平均成本是“单份”的价格，所以除以 (数量 * 乘数)
-            # 比如买了1张期权(100股)，花费500元。Qty=1, Multi=100。总花费500。
-            # Avg Cost 应显示 5.0 (单价)。 500 / (1 * 100) = 5.0。
-            # 但用户习惯看单价，所以公式应为：Total Cost / (Quantity * Multiplier)
-            # 股票：Total / (Qty * 1) -> OK
-            # 期权：Total / (Qty * 100) -> OK (显示权利金单价)
-
             divisor = current_qty * data['multiplier']
             avg_c = total_c / divisor if divisor > 0 else 0
 
+            # 计算持仓天数
+            days_held = 0
+            if data['first_buy_date']:
+                try:
+                    f_date = datetime.strptime(data['first_buy_date'], "%Y-%m-%d").date()
+                    days_held = (today - f_date).days
+                except:
+                    days_held = 0
+
             res.append({
-                'Symbol': key,  # 显示完整名称
-                'Raw Symbol': data['symbol'],  # 用于查询行情的原始代码
+                'Symbol': key,
+                'Raw Symbol': data['symbol'],
                 'Quantity': current_qty,
                 'Avg Cost': avg_c,
                 'Total Cost': total_c,
                 'Type': data['type'],
-                'Multiplier': data['multiplier']
+                'Multiplier': data['multiplier'],
+                'Days Held': days_held  # 新增字段
             })
 
     return pd.DataFrame(res)
