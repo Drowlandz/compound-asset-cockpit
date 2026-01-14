@@ -337,17 +337,141 @@ def set_cash_balance(target_amount, date_str):
     # 5. 写入修正记录
     add_fund_flow(date_str, f_type, abs(diff), note)
 
-def get_fund_flows():
-    """获取所有资金流水记录"""
+def get_fund_flows(include_calib=False):
+    """
+    获取资金流水
+    :param include_calib: False=只看入金出金, True=包含系统校准记录
+    """
     conn = sqlite3.connect(DB_FILE)
-    df = pd.read_sql_query("SELECT * FROM funds ORDER BY date DESC, id DESC", conn)
-    conn.close()
+
+    # 基础语句
+    sql = "SELECT * FROM funds"
+
+    # 修正逻辑：使用白名单机制 (只显示入金和出金)，并确保 SQL 语句空格正确
+    if not include_calib:
+        sql += " WHERE type IN ('DEPOSIT', 'WITHDRAW')"
+
+    sql += " ORDER BY date DESC, id DESC"
+
+    try:
+        df = pd.read_sql_query(sql, conn)
+    except Exception as e:
+        print(f"SQL Error: {e}")
+        df = pd.DataFrame()  # 出错返回空表防止崩坏
+    finally:
+        conn.close()
+
     return df
 
+
 def delete_fund_flow(fund_id):
-    """物理删除资金记录 (资金表结构简单，直接物理删除即可)"""
+    """删除资金记录"""
+    # 修正逻辑：强制转为 int，防止 numpy 类型导致 SQLite 删除失败
+    try:
+        f_id = int(fund_id)
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("DELETE FROM funds WHERE id = ?", (f_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Delete Error: {e}")
+        return False
+
+def add_fund_flow(date, f_type, amount, note):
+    """记录资金流水"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("DELETE FROM funds WHERE id = ?", (int(fund_id),))
+    c.execute('INSERT INTO funds (date, type, amount, note) VALUES (?, ?, ?, ?)', (date, f_type, amount, note))
     conn.commit()
     conn.close()
+
+
+def get_total_invested():
+    """
+    计算总投入本金 (仅包含入金和出金，排除校准/分红等杂项)
+    用于计算收益率的分母。
+    """
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    try:
+        c.execute("SELECT type, sum(amount) FROM funds GROUP BY type")
+        rows = c.fetchall()
+    except:
+        return 0
+    conn.close()
+
+    total = 0
+    for r in rows:
+        f_type, amount = r[0], r[1]
+        # 只有明确的入金和出金才算作本金变化
+        if f_type == 'DEPOSIT':
+            total += amount
+        elif f_type == 'WITHDRAW':
+            total -= amount
+        # CALIB_ADD / CALIB_SUB 被忽略
+    return total
+
+
+def get_cash_balance():
+    """
+    计算账户浮存金 (Cash Balance)
+    公式: (所有资金流入 - 所有资金流出) + (卖出总额 - 买入总额 - 手续费)
+    """
+    # 1. 计算资金账户的净额 (包含本金 + 校准差额)
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT type, sum(amount) FROM funds GROUP BY type")
+    rows = c.fetchall()
+    conn.close()
+
+    fund_net = 0
+    for r in rows:
+        f_type, amount = r[0], r[1]
+        if f_type in ['DEPOSIT', 'CALIB_ADD']:  # 入金 或 校准增加
+            fund_net += amount
+        elif f_type in ['WITHDRAW', 'CALIB_SUB']:  # 出金 或 校准减少
+            fund_net -= amount
+
+    # 2. 计算交易账户的现金流 (盈亏/买卖)
+    df_trans = get_all_transactions(include_deleted=False)
+    trading_cash_flow = 0
+
+    if not df_trans.empty:
+        for _, row in df_trans.iterrows():
+            # 兼容期权和股票：Price * Qty * Multiplier
+            # 如果是旧数据没有 multiplier 列，默认为1
+            mult = row.get('multiplier', 1)
+            if pd.isna(mult): mult = 1
+
+            total_amount = row['price'] * row['quantity'] * mult
+
+            if row['type'] == 'BUY':
+                trading_cash_flow -= (total_amount + row['fee'])
+            elif row['type'] == 'SELL':
+                trading_cash_flow += (total_amount - row['fee'])
+
+    return fund_net + trading_cash_flow
+
+
+def set_cash_balance(target_amount, date_str):
+    """
+    余额校准 (修正版)
+    使用特殊的 CALIB 类型，只调整余额，不影响本金投入。
+    """
+    current = get_cash_balance()
+    diff = target_amount - current
+
+    if abs(diff) < 0.01: return
+
+    if diff > 0:
+        # 余额少了，需要增加 (类似分红或利息)
+        f_type = 'CALIB_ADD'
+        note = f"余额校准 (增加): {current:,.2f} -> {target_amount:,.2f}"
+    else:
+        # 余额多了，需要减少 (类似扣费)
+        f_type = 'CALIB_SUB'
+        note = f"余额校准 (扣除): {current:,.2f} -> {target_amount:,.2f}"
+
+    add_fund_flow(date_str, f_type, abs(diff), note)

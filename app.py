@@ -232,67 +232,93 @@ def show_add_modal():
                 st.success("期权交易已保存")
                 st.rerun()
 
-    # --- Tab 3: 资金管理 (修复：移出 Tab 2 内部，并增加历史记录) ---
-    with tab3:
-        mode = st.selectbox("操作模式", ["资金流水", "余额校准"], label_visibility="collapsed")
+        # --- Tab 3: 资金管理 (修复版) ---
+        with tab3:
+            # === 关键修复：添加 key 参数防止 ID 冲突 ===
+            mode = st.selectbox("操作模式", ["资金流水", "余额校准"], label_visibility="collapsed",
+                                key="fund_mode_select")
 
-        # 1. 操作区域
-        if mode == "资金流水":
-            with st.form("fund_form"):
-                f_date = st.date_input("日期", date.today())
-                c1, c2 = st.columns(2)
-                f_type = c1.selectbox("类型", ["DEPOSIT", "WITHDRAW"],
-                                      format_func=lambda x: "入金" if x == "DEPOSIT" else "出金")
-                f_amount = c2.number_input("金额 ($)", 1000.0, step=100.0)
-                f_note = st.text_input("备注", placeholder="选填")
+            # 1. 操作表单区域
+            if mode == "资金流水":
+                with st.form("fund_form"):
+                    f_date = st.date_input("日期", date.today())
+                    c1, c2 = st.columns(2)
+                    f_type = c1.selectbox("类型", ["DEPOSIT", "WITHDRAW"],
+                                          format_func=lambda x: "入金" if x == "DEPOSIT" else "出金")
+                    f_amount = c2.number_input("金额 ($)", 1000.0, step=100.0)
+                    f_note = st.text_input("备注", placeholder="选填")
 
-                if st.form_submit_button("提交", use_container_width=True):
-                    db.add_fund_flow(f_date, f_type, f_amount, f_note)
-                    st.success("已记录")
-                    st.rerun()
+                    if st.form_submit_button("提交", use_container_width=True):
+                        db.add_fund_flow(f_date, f_type, f_amount, f_note)
+                        st.success("已记录")
+                        st.rerun()
 
-        else:  # 余额校准
-            curr_cash = db.get_cash_balance()
-            with st.form("fix_balance_form"):
-                st.markdown(
-                    f"<div style='text-align:center; color:#888; font-size:12px; margin-bottom:10px;'>系统浮存金: <b>${curr_cash:,.2f}</b></div>",
-                    unsafe_allow_html=True)
+            else:  # 余额校准
+                curr_cash = db.get_cash_balance()
+                with st.form("fix_balance_form"):
+                    st.markdown(
+                        f"<div style='text-align:center; color:#888; font-size:12px; margin-bottom:10px;'>系统浮存金: <b>${curr_cash:,.2f}</b></div>",
+                        unsafe_allow_html=True)
 
-                c1, c2 = st.columns(2)
-                target_date = c1.date_input("校准日期", date.today())
-                target_val = c2.number_input("实际余额 ($)", value=float(curr_cash), step=100.0)
+                    c1, c2 = st.columns(2)
+                    target_date = c1.date_input("校准日期", date.today())
+                    target_val = c2.number_input("实际余额 ($)", value=float(curr_cash), step=100.0)
 
-                if st.form_submit_button("执行校准", type="primary", use_container_width=True):
-                    db.set_cash_balance(target_val, target_date)
-                    st.success(f"余额已校准为 ${target_val:,.2f}")
-                    st.rerun()
+                    st.caption("ℹ️ 此操作仅调整余额数值，不会作为“资金流水”显示。")
 
-        # 2. 历史记录区域 (补回)
-        st.divider()
-        st.caption("📜 资金流水记录")
-        fund_df = db.get_fund_flows()
-        if not fund_df.empty:
-            edited_funds = st.data_editor(
-                fund_df,
-                column_config={
-                    "id": None, "date": "日期",
-                    "type": st.column_config.TextColumn("类型", width="small"),
-                    "amount": st.column_config.NumberColumn("金额", format="$%.2f"),
-                    "note": "备注"
-                },
-                hide_index=True, use_container_width=True, num_rows="dynamic", key="fund_editor_widget"
-            )
-            if st.session_state.get("fund_editor_widget"):
-                changes = st.session_state["fund_editor_widget"]
-                if changes.get("deleted_rows"):
-                    for idx in changes["deleted_rows"]:
-                        try:
-                            db.delete_fund_flow(fund_df.iloc[idx]['id'])
-                        except:
-                            pass
-                    st.rerun()
-        else:
-            st.info("暂无资金记录")
+                    if st.form_submit_button("执行校准", type="primary", use_container_width=True):
+                        db.set_cash_balance(target_val, target_date)
+                        st.success(f"余额已校准为 ${target_val:,.2f}")
+                        st.rerun()
+
+            # 2. 历史记录区域 (只显示入金/出金)
+            st.divider()
+            st.caption("📜 资金流水记录")
+
+            # 获取数据 (隐藏校准记录)
+            fund_df = db.get_fund_flows(include_calib=False)
+
+            if not fund_df.empty:
+                # === 关键修复：重置索引 ===
+                fund_df = fund_df.reset_index(drop=True)
+
+                # 构造显示用的 DataFrame
+                display_df = fund_df.copy()
+                type_map = {'DEPOSIT': '入金', 'WITHDRAW': '出金'}
+                display_df['display_type'] = display_df['type'].map(type_map).fillna(display_df['type'])
+
+                edited = st.data_editor(
+                    display_df,
+                    column_config={
+                        "id": None,  # 隐藏真实ID
+                        "date": "日期",
+                        "type": None,  # 隐藏原始英文类型
+                        "display_type": st.column_config.TextColumn("类型", width="small"),
+                        "amount": st.column_config.NumberColumn("金额", format="$%.2f"),
+                        "note": "备注"
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    num_rows="dynamic",  # 允许删除
+                    key="fund_list_editor"
+                )
+
+                # === 删除逻辑 ===
+                if st.session_state.get("fund_list_editor"):
+                    changes = st.session_state["fund_list_editor"]
+                    if changes.get("deleted_rows"):
+                        for idx in changes["deleted_rows"]:
+                            try:
+                                # 1. 这里的 idx 对应 reset_index 后的行号
+                                # 2. 获取该行的真实数据库 ID
+                                raw_id = fund_df.iloc[idx]['id']
+                                # 3. 调用修复后的删除函数
+                                db.delete_fund_flow(raw_id)
+                            except Exception as e:
+                                print(f"UI Delete Failed: {e}")
+                        st.rerun()
+            else:
+                st.info("暂无资金流水记录")
 
     # --- Tab 4: 回收站 ---
     with tab4:
