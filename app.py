@@ -2,11 +2,12 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import requests
+import yfinance as yf
 from datetime import date, datetime
 import data_manager as db
 
 # ================= 1. 页面配置与 CSS =================
-st.set_page_config(page_title="我的投资管理 Pro", layout="wide", page_icon="💰")
+st.set_page_config(page_title="长期主义资产管理", layout="wide", page_icon="🔭")
 db.init_db()
 
 st.markdown("""
@@ -22,6 +23,9 @@ st.markdown("""
     footer {visibility: hidden;}
     header {visibility: hidden;}
 
+    /* 侧边栏隐藏 */
+    section[data-testid="stSidebar"] { display: none; }
+
     /* 仪表盘卡片渲染 */
     div[data-testid="stMetric"] {
         background-color: #ffffff;
@@ -36,16 +40,52 @@ st.markdown("""
         box-shadow: 0 8px 16px rgba(0,0,0,0.08);
         border-color: #d1d5db;
     }
-    div[data-testid="column"]:first-child div[data-testid="stMetric"] {
-        background: linear-gradient(to right bottom, #ffffff, #f8fafc);
-        border-left: 5px solid #2563eb;
+
+    /* 宏观指标微调 */
+    div[data-testid="column"]:nth-child(1) div[data-testid="stMetric"] label {
+        font-size: 14px;
+        color: #666;
     }
+
+    /* 净资产大卡片特殊样式 */
+    div.net-asset-card div[data-testid="stMetric"] {
+        background: linear-gradient(to right bottom, #ffffff, #f0fdf4);
+        border-left: 5px solid #16a34a; 
+    }
+
+    /* 悬浮按钮样式 */
+    div.stButton:has(button:active), div.stButton:last-of-type {
+        position: fixed; bottom: 40px; right: 40px; z-index: 9999; width: auto;
+    }
+    div.stButton:last-of-type > button {
+        border-radius: 50%; width: 60px; height: 60px; font-size: 24px;
+        background-color: #FF4B4B; color: white; box-shadow: 0px 4px 10px rgba(0,0,0,0.3); border: none;
+    }
+    div[data-testid="stDialog"] div.stButton { position: static !important; width: auto !important; }
+    div[data-testid="stDialog"] button { border-radius: 4px !important; width: auto !important; height: auto !important; font-size: 1rem !important; box-shadow: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
 
-# ================= 2. 工具函数 =================
+# ================= 2. 核心逻辑工具函数 =================
+
+@st.cache_data(ttl=3600)
+def get_exchange_rates():
+    """获取基础汇率 (相对于 USD)"""
+    return {'USD': 1.0, 'HKD': 0.128, 'CNY': 0.138, 'CNH': 0.138}
+
+
+def detect_currency(symbol):
+    """根据代码判断币种"""
+    symbol = symbol.lower().strip()
+    if symbol.isdigit() and len(symbol) == 5: return 'HKD'
+    if symbol.startswith('hk'): return 'HKD'
+    if symbol.startswith('sh') or symbol.startswith('sz') or (symbol.isdigit() and len(symbol) == 6): return 'CNY'
+    return 'USD'
+
+
 def get_realtime_price(symbol):
+    """获取股票实时价格"""
     symbol = symbol.lower().strip()
     headers = {'Referer': 'https://finance.sina.com.cn'}
     try:
@@ -55,21 +95,124 @@ def get_realtime_price(symbol):
             resp = requests.get(url, headers=headers, timeout=2)
             content = resp.text.split('="')[1].split(',')
             if len(content) > 1: return float(content[1])
-        else:  # A股
-            if not (symbol.startswith('sh') or symbol.startswith('sz')):
-                prefix = 'sh' if symbol.startswith('6') else 'sz'
+        else:  # A股/港股
+            if not (symbol.startswith('sh') or symbol.startswith('sz') or symbol.startswith('hk')):
+                if len(symbol) == 5:
+                    prefix = 'hk'
+                else:
+                    prefix = 'sh' if symbol.startswith('6') else 'sz'
                 symbol = prefix + symbol
             url = f"https://hq.sinajs.cn/list={symbol}"
             resp = requests.get(url, headers=headers, timeout=2)
             content = resp.text.split('="')[1].split(',')
-            if len(content) > 3: return float(content[3])
+            if len(content) > 3: return float(content[6] if 'hk' in symbol else content[3])
     except:
         return None
     return None
 
 
-def update_and_save_snapshot():
-    pass
+@st.cache_data(ttl=1800)
+def get_macro_data():
+    """获取宏观指标 (Yahoo Finance)"""
+    vix, tnx = None, None
+    try:
+        try:
+            vix_ticker = yf.Ticker("^VIX")
+            hist = vix_ticker.history(period="1d")
+            if not hist.empty: vix = hist['Close'].iloc[-1]
+        except:
+            pass
+
+        try:
+            tnx_ticker = yf.Ticker("^TNX")
+            hist = tnx_ticker.history(period="1d")
+            if not hist.empty: tnx = hist['Close'].iloc[-1]
+        except:
+            pass
+
+        return vix, tnx
+    except:
+        return None, None
+
+
+@st.cache_data(ttl=86400)
+def get_stock_sector(symbol):
+    """获取股票行业标签 (自动汉化)"""
+    symbol = symbol.lower().strip()
+    yf_symbol = symbol
+    if symbol.isdigit() and len(symbol) == 5:
+        yf_symbol = f"{symbol}.HK"
+    elif symbol.startswith('hk'):
+        yf_symbol = f"{symbol[2:]}.HK"
+    elif symbol.startswith('sh'):
+        yf_symbol = f"{symbol[2:]}.SS"
+    elif symbol.startswith('sz'):
+        yf_symbol = f"{symbol[2:]}.SZ"
+
+    sector_map = {
+        'Technology': '💻 科技', 'Financial Services': '🏦 金融', 'Consumer Cyclical': '🛍️ 消费(周期)',
+        'Consumer Defensive': '🛡️ 消费(防御)', 'Healthcare': '💊 医药', 'Communication Services': '📡 通信',
+        'Energy': '🛢️ 能源', 'Industrials': '🏭 工业', 'Real Estate': '🏠 地产', 'Basic Materials': '🧱 原材料',
+        'Utilities': '⚡ 公用事业'
+    }
+    try:
+        ticker = yf.Ticker(yf_symbol)
+        sec = ticker.info.get('sector', 'Unknown')
+        return sector_map.get(sec, sec)
+    except:
+        return "N/A"
+
+
+def calculate_option_intrinsic_value(option_row, underlying_price):
+    """期权内在价值"""
+    if underlying_price <= 0: return 0
+    strike = option_row.get('strike')
+    o_type = option_row.get('option_type')
+    if not strike or not o_type: return 0
+
+    if o_type == 'CALL':
+        return max(0, underlying_price - strike)
+    elif o_type == 'PUT':
+        return max(0, strike - underlying_price)
+    return 0
+
+
+def update_portfolio_valuation(df):
+    """统一汇率 + 期权估值 + 行业标签 + 币种标记"""
+    rates = get_exchange_rates()
+    current_prices = []
+    mkt_values_usd = []
+    sectors = []
+    currencies = []
+
+    for i, row in df.iterrows():
+        raw_sym = row['Raw Symbol']
+        currency = detect_currency(raw_sym)
+        currencies.append(currency)
+        rate = rates.get(currency, 1.0)
+
+        price = get_realtime_price(raw_sym)
+
+        # 行业
+        sec = get_stock_sector(raw_sym) if row['Type'] == 'STOCK' else "📜 期权"
+        sectors.append(sec)
+
+        # 估值
+        final_price_native = 0
+        if row['Type'] == 'STOCK':
+            final_price_native = price if price else (row['Avg Cost'] or 0)
+        elif row['Type'] == 'OPTION':
+            final_price_native = calculate_option_intrinsic_value(row, price) if price else (row['Avg Cost'] or 0)
+
+        val_usd = final_price_native * row['Quantity'] * row['Multiplier'] * rate
+        current_prices.append(final_price_native)
+        mkt_values_usd.append(val_usd)
+
+    df['Price'] = current_prices
+    df['Market Value'] = mkt_values_usd
+    df['Sector'] = sectors
+    df['Currency'] = currencies
+    return df
 
 
 # ================= 3. 弹窗逻辑 =================
@@ -169,197 +312,168 @@ def show_add_modal():
             st.caption("空")
 
 
-# ================= 5. 主页面: 长期主义看板 =================
-st.subheader("🔭 长期布局看板")
+# ================= 5. 主页面逻辑 =================
 
-# 1. 获取数据
+st.subheader("🔭 长期主义驾驶舱")
+
+# --- 1. 宏观模块 ---
+vix, tnx = get_macro_data()
+mc1, mc2 = st.columns(2)
+
+vix_val_str = f"{vix:.2f}" if vix else "N/A"
+vix_label = "市场情绪"
+vix_delta = "off"
+if vix:
+    if vix < 15:
+        vix_delta = "inverse"
+        vix_label = "市场过热 (贪婪)"
+    elif vix > 30:
+        vix_delta = "normal"
+        vix_label = "黄金坑 (恐慌)"
+    else:
+        vix_label = "情绪平稳"
+
+mc1.metric("🌊 VIX 恐慌指数", vix_val_str, vix_label, delta_color=vix_delta, help="<15: 贪婪(风险); >30: 恐慌(机会)。")
+tnx_val_str = f"{tnx:.2f}%" if tnx else "N/A"
+mc2.metric("⚓ 10年美债收益率", tnx_val_str, "资产定价重力", delta_color="off", help="无风险利率，资产估值的锚。")
+
+st.markdown("---")
+
+# --- 2. 个人资产计算 ---
 portfolio_df = db.get_portfolio_summary()
-total_invested_funds = db.get_total_invested()
+total_invested = db.get_total_invested()
 cash_balance = db.get_cash_balance()
 
-# 2. 计算市值
-market_value_total = 0
-total_holdings_cost = 0
+market_val_usd = 0
+total_cost_usd = 0
 
 if not portfolio_df.empty:
     if 'last_update' not in st.session_state:
-        p_bar = st.progress(0, text="同步行情...")
-        current_prices = []
-        mkt_values = []
-
-        for i, row in portfolio_df.iterrows():
-            if row['Type'] == 'STOCK':
-                price = get_realtime_price(row['Raw Symbol'])
-                if price is None: price = row['Avg Cost'] or 0
-            else:
-                price = row['Avg Cost'] or 0
-
-            current_prices.append(price)
-            val = price * row['Quantity'] * row['Multiplier']
-            mkt_values.append(val)
-            p_bar.progress((i + 1) / len(portfolio_df))
-        p_bar.empty()
-
-        portfolio_df['Price'] = current_prices
-        portfolio_df['Market Value'] = mkt_values
+        portfolio_df = update_portfolio_valuation(portfolio_df)
         st.session_state['portfolio_cache'] = portfolio_df
         st.session_state['last_update'] = datetime.now()
     else:
         portfolio_df = st.session_state['portfolio_cache']
 
-    market_value_total = portfolio_df['Market Value'].sum()
-    total_holdings_cost = portfolio_df['Total Cost'].sum()
+    market_val_usd = portfolio_df['Market Value'].sum()
+    total_cost_usd = portfolio_df['Total Cost'].sum()
 
-# 3. 计算核心指标
-final_total_asset = market_value_total + cash_balance
+# --- 3. 净资产计算 ---
+final_net_asset = market_val_usd + cash_balance
 
-if total_invested_funds > 0:
-    final_invested = total_invested_funds
-    total_pnl = final_total_asset - final_invested
-else:
-    final_invested = total_holdings_cost if total_holdings_cost > 0 else 1
-    total_pnl = market_value_total - total_holdings_cost
+base = total_invested if total_invested > 0 else (total_cost_usd if total_cost_usd > 0 else 1)
+pnl = final_net_asset - base
+ret_pct = (pnl / base) * 100
 
-ret_rate = (total_pnl / final_invested * 100)
-db.save_daily_snapshot(date.today().strftime('%Y-%m-%d'), final_total_asset, final_invested)
+db.save_daily_snapshot(date.today().strftime('%Y-%m-%d'), final_net_asset, base)
 
-# 4. 计算风控指标
-if final_total_asset > 0:
-    leverage_ratio = market_value_total / final_total_asset
-else:
-    leverage_ratio = 999.0
+# 风控指标
+lev_ratio = (market_val_usd / final_net_asset) if final_net_asset > 0 else 999
+cash_ratio = (cash_balance / final_net_asset * 100) if final_net_asset > 0 else 0
 
-top3_concentration = 0
-if market_value_total > 0:
-    top3_val = portfolio_df.nlargest(3, 'Market Value')['Market Value'].sum()
-    top3_concentration = (top3_val / market_value_total) * 100
+top3_conc = 0
+if market_val_usd > 0:
+    top3_conc = (portfolio_df.nlargest(3, 'Market Value')['Market Value'].sum() / market_val_usd) * 100
 
-cash_weight = (cash_balance / final_total_asset * 100) if final_total_asset > 0 else 0
-
-# ================= 渲染看板 (UI) =================
-
-c_main = st.columns(1)[0]
-c_main.metric("💎 净资产 (Net Assets)", f"${final_total_asset:,.0f}", f"{ret_rate:+.2f}% (总收益率)")
+# --- 4. 看板渲染 ---
+with st.container():
+    st.markdown('<div class="net-asset-card">', unsafe_allow_html=True)
+    c_main = st.columns(1)[0]
+    c_main.metric("💎 净资产 (Net Assets USD)", f"${final_net_asset:,.0f}", f"{ret_pct:+.2f}%")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 st.write("")
-
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("⚖️ 杠杆率", f"{leverage_ratio:.2f}x", delta="安全" if leverage_ratio <= 1.2 else "偏高",
-          delta_color="normal" if leverage_ratio <= 1.2 else "inverse", help="持仓市值 / 净资产")
-c2.metric("🎯 Top3 集中度", f"{top3_concentration:.1f}%", help="前三大持仓占比")
-c3.metric("🔫 干火药/负债", f"${abs(cash_balance):,.0f}", f"{cash_weight:+.1f}% (仓位)",
-          delta_color="normal" if cash_balance >= 0 else "inverse")
-c4.metric("🛡️ 利润安全垫", f"${total_pnl:,.0f}", help="累计总盈利")
+# === 修复点：这里使用了 lev_ratio，与上方定义一致 ===
+c1.metric("⚖️ 杠杆率", f"{lev_ratio:.2f}x", delta="安全" if lev_ratio <= 1.2 else "偏高",
+          delta_color="inverse" if lev_ratio > 1.2 else "normal")
+c2.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%")
+c3.metric("🔫 现金/负债", f"${abs(cash_balance):,.0f}", f"{cash_ratio:+.1f}%")
+c4.metric("🛡️ 利润安全垫", f"${pnl:,.0f}")
 
 st.divider()
 
-# ================= 图表与列表 =================
+# --- 5. 多维透视图表与列表 ---
 if not portfolio_df.empty or abs(cash_balance) > 1:
-    col_chart1, col_chart2 = st.columns([1, 1.8])  # 表格更宽一点
+    col_l, col_r = st.columns([1, 1.8])
 
-    with col_chart1:
-        st.caption("资产分布 (Long Only)")
-        pie_data = portfolio_df[['Symbol', 'Market Value']].copy()
+    with col_l:
+        st.caption("资产分布透视")
+        chart_tab1, chart_tab2, chart_tab3 = st.tabs(["持仓", "赛道", "币种"])
+
+        pie_data = portfolio_df.copy()
         if cash_balance > 0:
-            pie_data.loc[len(pie_data)] = {'Symbol': 'CASH 💵', 'Market Value': cash_balance}
+            new_row = {'Symbol': 'CASH', 'Market Value': cash_balance, 'Sector': '💵 现金', 'Currency': 'USD'}
+            pie_data = pd.concat([pie_data, pd.DataFrame([new_row])], ignore_index=True)
 
         valid_pie = pie_data[pie_data['Market Value'] > 0]
-        if not valid_pie.empty:
-            fig = px.pie(valid_pie, values='Market Value', names='Symbol', hole=0.5)
-            fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=280)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("无正资产")
 
-        if not valid_pie.empty:  # 负债提示
-            liabilities = pie_data[pie_data['Market Value'] < 0]
-            if not liabilities.empty:
-                st.warning(f"📉 包含负债: ${liabilities['Market Value'].sum():,.0f}")
+        with chart_tab1:
+            if not valid_pie.empty:
+                fig = px.pie(valid_pie, values='Market Value', names='Symbol', hole=0.5)
+                fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=250, showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("无数据")
 
-    with col_chart2:
-        st.caption("持仓明细 (含长线指标)")
+        with chart_tab2:
+            if not valid_pie.empty:
+                sec_df = valid_pie.groupby('Sector')['Market Value'].sum().reset_index()
+                fig = px.pie(sec_df, values='Market Value', names='Sector', hole=0.5)
+                fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=250)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("无数据")
 
-        # 1. 计算扩展指标
+        with chart_tab3:
+            if not valid_pie.empty:
+                curr_df = valid_pie.groupby('Currency')['Market Value'].sum().reset_index()
+                fig = px.pie(curr_df, values='Market Value', names='Currency', hole=0.5,
+                             color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=250)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("无数据")
+
+    with col_r:
+        st.caption("持仓明细 (自动折算 USD)")
         portfolio_df['PnL $'] = portfolio_df['Market Value'] - portfolio_df['Total Cost']
-        portfolio_df['PnL %'] = (portfolio_df['PnL $'] / portfolio_df['Total Cost'].replace(0, 1) * 100).fillna(0)
-
-        # 2. 安全边际 (修复版：*100)
         portfolio_df['Safety Margin'] = portfolio_df.apply(
-            lambda x: max(0, (x['Price'] - x['Avg Cost']) / x['Price'] * 100) if x['Price'] > 0 else 0, axis=1
+            lambda x: max(0, (x['Price'] - x['Avg Cost']) / x['Price'] * 100) if x['Price'] > 0 and x[
+                'Type'] == 'STOCK' else 0, axis=1
         )
 
-        # 3. 排序 (按市值降序)
         display_df = portfolio_df.sort_values('Market Value', ascending=False)
 
-        # 4. 渲染高级表格
         st.dataframe(
             display_df,
-            column_order=["Symbol", "Quantity", "Avg Cost", "Price", "Market Value", "PnL $", "PnL %", "Safety Margin",
+            column_order=["Sector", "Symbol", "Quantity", "Avg Cost", "Price", "Market Value", "Safety Margin",
                           "Days Held"],
             column_config={
+                "Sector": st.column_config.TextColumn("赛道", width="small"),
                 "Symbol": st.column_config.TextColumn("代码", width="small"),
                 "Quantity": st.column_config.NumberColumn("持仓", format="%.0f"),
                 "Avg Cost": st.column_config.NumberColumn("成本", format="%.2f"),
-                "Price": st.column_config.NumberColumn("现价", format="%.2f"),
-                "Market Value": st.column_config.NumberColumn("市值", format="$%.0f"),
-                "PnL $": st.column_config.NumberColumn("盈亏额", format="$%+.0f"),
-                "PnL %": st.column_config.NumberColumn("盈亏率", format="%+.2f%%"),
-
-                # 🔥 进度条 0-100
-                "Safety Margin": st.column_config.ProgressColumn(
-                    "安全边际",
-                    help="现价距离成本价的跌幅缓冲空间 (越长越安全)",
-                    format="%.1f%%",
-                    min_value=0,
-                    max_value=100,
-                ),
-
-                "Days Held": st.column_config.NumberColumn(
-                    "持有天数",
-                    help="从第一次买入至今的天数",
-                    format="%d 天"
-                )
+                "Price": st.column_config.NumberColumn("现价/内在", format="%.2f"),
+                "Market Value": st.column_config.NumberColumn("美元市值", format="$%.0f"),
+                "Safety Margin": st.column_config.ProgressColumn("安全边际", format="%.1f%%", min_value=0,
+                                                                 max_value=100),
+                "Days Held": st.column_config.NumberColumn("持有", format="%d天")
             },
-            use_container_width=True,
-            height=400,
-            hide_index=True
+            use_container_width=True, height=400, hide_index=True
         )
-else:
-    st.info("暂无持仓")
 
-# ================= 交易流水 =================
+# 流水
 st.subheader("📋 交易流水")
-all_trans = db.get_all_transactions(include_deleted=False)
-if not all_trans.empty:
-    cols = ['id', 'date', 'symbol', 'type', 'quantity', 'price', 'fee', 'note']
-    if 'note' not in all_trans.columns: all_trans['note'] = ""
-
-    edited_df = st.data_editor(
-        all_trans[cols],
-        column_config={"id": None, "quantity": st.column_config.NumberColumn(format="%.0f"),
-                       "price": st.column_config.NumberColumn(format="%.2f")},
-        hide_index=True, use_container_width=True, num_rows="dynamic", key="trans_editor"
-    )
+at = db.get_all_transactions(False)
+if not at.empty:
+    edited = st.data_editor(at[['id', 'date', 'symbol', 'type', 'quantity', 'price', 'note']], hide_index=True,
+                            use_container_width=True, key="trans_editor")
     if st.session_state.get("trans_editor", {}).get("deleted_rows"):
         for idx in st.session_state["trans_editor"]["deleted_rows"]:
-            db.soft_delete_transaction(int(all_trans.iloc[idx]['id']))
+            db.soft_delete_transaction(int(at.iloc[idx]['id']))
         st.rerun()
 
-# ================= 悬浮按钮 =================
+# 悬浮按钮
 st.markdown('<span id="fab-anchor"></span>', unsafe_allow_html=True)
-if st.button("➕", key="fab_main"):
-    show_add_modal()
-
-st.markdown("""
-<style>
-    div.stButton:has(button:active), div.stButton:last-of-type {
-        position: fixed; bottom: 40px; right: 40px; z-index: 9999; width: auto;
-    }
-    div.stButton:last-of-type > button {
-        border-radius: 50%; width: 60px; height: 60px; font-size: 24px;
-        background-color: #FF4B4B; color: white; box-shadow: 0px 4px 10px rgba(0,0,0,0.3); border: none;
-    }
-    div[data-testid="stDialog"] div.stButton { position: static !important; width: auto !important; }
-    div[data-testid="stDialog"] button { border-radius: 4px !important; width: auto !important; height: auto !important; font-size: 1rem !important; box-shadow: none !important; }
-</style>
-""", unsafe_allow_html=True)
+if st.button("➕", key="fab_main"): show_add_modal()
