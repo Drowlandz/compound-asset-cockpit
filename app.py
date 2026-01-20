@@ -1,371 +1,24 @@
+# app.py
 import streamlit as st
 import pandas as pd
-import requests
-import yfinance as yf
-import random
 from datetime import date, datetime
 import data_manager as db
-from streamlit_echarts import st_echarts
+import config as cf  # 导入配置
+import utils as ut  # 导入逻辑
+import ui  # 导入图表
 
-# ================= 1. 页面配置与 CSS (UI 重构版) =================
+# ================= 1. 初始化 =================
 st.set_page_config(page_title="长期主义资产管理", layout="wide", page_icon="🔭")
 db.init_db()
-
-st.markdown("""
-<style>
-    /* === 全局基础 === */
-    html, body, [class*="css"] { font-family: 'Check', -apple-system, system-ui, sans-serif; }
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    section[data-testid="stSidebar"] { display: none; }
-
-    /* === 1. 魔改切换按钮 (Segmented Control) === */
-    /* 隐藏原本的圆圈单选框 */
-    div[role="radiogroup"] label > div:first-child {
-        display: none;
-    }
-
-    /* 容器样式 */
-    div[role="radiogroup"] {
-        background-color: #f1f5f9; /* 浅灰底色 */
-        padding: 4px;
-        border-radius: 12px;
-        display: inline-flex;
-        border: 1px solid #e2e8f0;
-        gap: 0px; /* 紧凑布局 */
-    }
-
-    /* 选项按钮样式 */
-    div[role="radiogroup"] label {
-        border: none;
-        padding: 8px 20px;
-        border-radius: 8px;
-        margin: 0;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        color: #64748b; /* 未选中文字颜色 */
-        font-weight: 500;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    /* 选中状态 (Streamlit 会给选中的 label 加特定 class，这里我们利用层级覆盖) */
-    /* 由于 CSS 无法直接选父级，我们用背景色技巧：
-       默认状态下背景透明，选中的文字会变色。
-       为了实现完美的 iOS 白色滑块效果，需要更复杂的 hack，
-       这里使用"视觉欺骗"法：给选中的文字加粗变深色，鼠标悬浮有白底。
-    */
-    div[role="radiogroup"] label:hover {
-        background-color: #ffffff;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        color: #0f172a;
-    }
-
-    /* 选中项的文字样式 (Streamlit 默认会处理 checked 的颜色，我们加强它) */
-    div[role="radiogroup"] div[data-checked="true"] {
-        background-color: #ffffff !important;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        border-radius: 8px;
-        color: #0f172a !important;
-        font-weight: bold;
-        transform: scale(1.02);
-    }
-
-    /* === 2. 荣誉勋章 (右上角悬浮 + 呼吸灯) === */
-    @keyframes breathe {
-        0% { box-shadow: 0 0 5px rgba(255, 215, 0, 0.3); transform: scale(1); }
-        50% { box-shadow: 0 0 15px rgba(255, 215, 0, 0.6); transform: scale(1.02); }
-        100% { box-shadow: 0 0 5px rgba(255, 215, 0, 0.3); transform: scale(1); }
-    }
-    .badge-container {
-        position: fixed; top: 60px; right: 30px; z-index: 9999;
-        background: rgba(255, 255, 255, 0.95);
-        backdrop-filter: blur(5px);
-        border: 1px solid #eab308; /* 金色边框 */
-        border-left: 6px solid #eab308;
-        border-radius: 8px; 
-        padding: 8px 16px;
-        display: flex; align-items: center; gap: 12px;
-        box-shadow: 0 10px 25px rgba(234, 179, 8, 0.15);
-        animation: breathe 4s infinite ease-in-out;
-        transition: transform 0.3s;
-    }
-    .badge-container:hover { transform: translateY(-2px); }
-    .badge-icon { font-size: 28px; filter: drop-shadow(0 2px 2px rgba(0,0,0,0.1)); }
-    .badge-text { font-family: 'Segoe UI', sans-serif; font-weight: 800; color: #854d0e; font-size: 15px; line-height: 1.1; }
-    .badge-label { font-size: 11px; color: #a16207; font-weight: 500; margin-top: 2px; }
-
-    /* === 3. 卡片与布局优化 === */
-    /* 语录卡片 */
-    .quote-card {
-        background: linear-gradient(to right, #f8f9fa, #fff);
-        border-left: 4px solid #3b82f6;
-        padding: 12px 20px;
-        margin-bottom: 25px;
-        border-radius: 0 8px 8px 0;
-        font-family: 'Georgia', serif;
-        font-style: italic;
-        color: #374151;
-        font-size: 16px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.02);
-    }
-    .quote-author { text-align: right; font-weight: 600; font-size: 13px; color: #9ca3af; margin-top: 4px; font-style: normal; }
-
-    /* 核心指标卡片 */
-    div[data-testid="stMetric"] {
-        background-color: #ffffff; padding: 18px 24px; border-radius: 16px;
-        border: 1px solid #f1f5f9; 
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.01), 0 2px 4px -1px rgba(0, 0, 0, 0.01);
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    div[data-testid="stMetric"]:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 10px 10px -5px rgba(0, 0, 0, 0.01);
-        border-color: #cbd5e1;
-    }
-    div[data-testid="column"]:nth-child(1) div[data-testid="stMetric"] label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; }
-
-    /* 净资产卡片 (极光绿渐变) */
-    div.net-asset-card div[data-testid="stMetric"] {
-        background: linear-gradient(120deg, #ffffff 0%, #ecfdf5 100%);
-        border: 1px solid #a7f3d0;
-        border-left: 6px solid #059669;
-    }
-
-    /* 悬浮按钮 */
-    div.stButton:has(button:active), div.stButton:last-of-type {
-        position: fixed; bottom: 40px; right: 40px; z-index: 9999; width: auto;
-    }
-    div.stButton:last-of-type > button {
-        border-radius: 50%; width: 64px; height: 64px; font-size: 28px;
-        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-        color: white; box-shadow: 0 10px 25px rgba(220, 38, 38, 0.4); 
-        border: 2px solid #fff;
-        transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
-    }
-    div.stButton:last-of-type > button:hover { transform: scale(1.15) rotate(90deg); box-shadow: 0 15px 35px rgba(220, 38, 38, 0.5); }
-
-    /* 修正弹窗按钮 */
-    div[data-testid="stDialog"] div.stButton { position: static !important; width: auto !important; }
-    div[data-testid="stDialog"] button { border-radius: 6px !important; width: auto !important; height: auto !important; font-size: 1rem !important; background: #f1f5f9; color: #0f172a; border: 1px solid #cbd5e1; box-shadow: none; }
-    div[data-testid="stDialog"] button:hover { background: #e2e8f0; }
-</style>
-""", unsafe_allow_html=True)
+st.markdown(cf.CUSTOM_CSS, unsafe_allow_html=True)  # 加载 CSS
 
 
-# ================= 2. 核心逻辑工具函数 =================
-
-@st.cache_data(ttl=3600)
-def get_exchange_rates():
-    """获取基础汇率 (相对于 USD)"""
-    return {'USD': 1.0, 'HKD': 0.128, 'CNY': 0.138, 'CNH': 0.138}
-
-
-def detect_currency(symbol):
-    """根据代码判断币种"""
-    symbol = symbol.lower().strip()
-    if symbol.isdigit() and len(symbol) == 5: return 'HKD'
-    if symbol.startswith('hk'): return 'HKD'
-    if symbol.startswith('sh') or symbol.startswith('sz') or (symbol.isdigit() and len(symbol) == 6): return 'CNY'
-    return 'USD'
-
-
-def get_realtime_price(symbol):
-    """获取股票实时价格"""
-    symbol = symbol.lower().strip()
-    headers = {'Referer': 'https://finance.sina.com.cn'}
-    try:
-        if ' ' in symbol: return None
-        if symbol.isalpha():  # 美股
-            url = f"https://hq.sinajs.cn/list=gb_{symbol}"
-            resp = requests.get(url, headers=headers, timeout=2)
-            content = resp.text.split('="')[1].split(',')
-            if len(content) > 1: return float(content[1])
-        else:  # A股/港股
-            if not (symbol.startswith('sh') or symbol.startswith('sz') or symbol.startswith('hk')):
-                if len(symbol) == 5:
-                    prefix = 'hk'
-                else:
-                    prefix = 'sh' if symbol.startswith('6') else 'sz'
-                symbol = prefix + symbol
-            url = f"https://hq.sinajs.cn/list={symbol}"
-            resp = requests.get(url, headers=headers, timeout=2)
-            content = resp.text.split('="')[1].split(',')
-            if len(content) > 3: return float(content[6] if 'hk' in symbol else content[3])
-    except:
-        return None
-    return None
-
-
-@st.cache_data(ttl=1800)
-def get_global_macro_data():
-    """获取全球宏观数据"""
-    data = {'vix': None, 'tnx': None, 'vhsi': None, 'cnh': None}
-    try:
-        data['vix'] = yf.Ticker("^VIX").history(period="1d")['Close'].iloc[-1]
-    except:
-        pass
-    try:
-        data['tnx'] = yf.Ticker("^TNX").history(period="1d")['Close'].iloc[-1]
-    except:
-        pass
-    try:
-        data['vhsi'] = yf.Ticker("^VHSI").history(period="5d")['Close'].iloc[-1]
-    except:
-        pass
-    try:
-        data['cnh'] = yf.Ticker("CNH=X").history(period="5d")['Close'].iloc[-1]
-    except:
-        pass
-    return data
-
-
-@st.cache_data(ttl=86400)
-def get_stock_sector(symbol):
-    """获取股票行业标签"""
-    symbol = symbol.lower().strip()
-    yf_symbol = symbol
-    if symbol.isdigit() and len(symbol) == 5:
-        yf_symbol = f"{symbol}.HK"
-    elif symbol.startswith('hk'):
-        yf_symbol = f"{symbol[2:]}.HK"
-    elif symbol.startswith('sh'):
-        yf_symbol = f"{symbol[2:]}.SS"
-    elif symbol.startswith('sz'):
-        yf_symbol = f"{symbol[2:]}.SZ"
-
-    sector_map = {
-        'Technology': '💻 科技', 'Financial Services': '🏦 金融', 'Consumer Cyclical': '🛍️ 消费(周期)',
-        'Consumer Defensive': '🛡️ 消费(防御)', 'Healthcare': '💊 医药', 'Communication Services': '📡 通信',
-        'Energy': '🛢️ 能源', 'Industrials': '🏭 工业', 'Real Estate': '🏠 地产', 'Basic Materials': '🧱 原材料',
-        'Utilities': '⚡ 公用事业'
-    }
-    try:
-        ticker = yf.Ticker(yf_symbol)
-        sec = ticker.info.get('sector', 'Unknown')
-        return sector_map.get(sec, sec)
-    except:
-        return "N/A"
-
-
-def calculate_option_intrinsic_value(option_row, underlying_price):
-    if underlying_price <= 0: return 0
-    strike = option_row.get('strike')
-    o_type = option_row.get('option_type')
-    if not strike or not o_type: return 0
-    if o_type == 'CALL':
-        return max(0, underlying_price - strike)
-    elif o_type == 'PUT':
-        return max(0, strike - underlying_price)
-    return 0
-
-
-def update_portfolio_valuation(df):
-    rates = get_exchange_rates()
-    current_prices = []
-    mkt_values_usd = []
-    sectors = []
-    currencies = []
-
-    for i, row in df.iterrows():
-        raw_sym = row['Raw Symbol']
-        currency = detect_currency(raw_sym)
-        currencies.append(currency)
-        rate = rates.get(currency, 1.0)
-
-        price = get_realtime_price(raw_sym)
-        sec = get_stock_sector(raw_sym) if row['Type'] == 'STOCK' else "📜 期权"
-        sectors.append(sec)
-
-        final_price_native = 0
-        if row['Type'] == 'STOCK':
-            final_price_native = price if price else (row['Avg Cost'] or 0)
-        elif row['Type'] == 'OPTION':
-            final_price_native = calculate_option_intrinsic_value(row, price) if price else (row['Avg Cost'] or 0)
-
-        val_usd = final_price_native * row['Quantity'] * row['Multiplier'] * rate
-        current_prices.append(final_price_native)
-        mkt_values_usd.append(val_usd)
-
-    df['Price'] = current_prices
-    df['Market Value'] = mkt_values_usd
-    df['Sector'] = sectors
-    df['Currency'] = currencies
-    return df
-
-
-# 🔥 ECharts 3D 饼图
-def render_echarts_pie(df, name_col, value_col, title_text=""):
-    data_list = [{"value": row[value_col], "name": row[name_col]} for _, row in df.iterrows()]
-    options = {
-        "tooltip": {"trigger": "item", "formatter": "{b}: ${c} ({d}%)"},
-        "legend": {"show": False},
-        "series": [{
-            "name": title_text,
-            "type": "pie",
-            "radius": ["45%", "75%"],
-            "itemStyle": {"borderRadius": 8, "borderColor": "#fff", "borderWidth": 2},
-            "label": {"show": False},
-            "emphasis": {
-                "label": {"show": True, "fontSize": 18, "fontWeight": "bold", "formatter": "{b}\n{d}%",
-                          "color": "#333"},
-                "scale": True, "scaleSize": 15,
-                "itemStyle": {"shadowBlur": 20, "shadowOffsetX": 0, "shadowColor": "rgba(0, 0, 0, 0.2)"}
-            },
-            "data": data_list
-        }]
-    }
-    st_echarts(options=options, height="280px")
-
-
-# 🔥 ECharts 历史净值面积图
-def render_history_chart(history_df):
-    if history_df.empty: return
-    dates = pd.to_datetime(history_df['date']).dt.strftime('%Y-%m-%d').tolist()
-    values = [float(x) for x in history_df['total_asset'].tolist()]
-
-    options = {
-        "tooltip": {"trigger": 'axis', "formatter": "📅 {b}<br/>💰 净资产: ${c}",
-                    "backgroundColor": "rgba(255,255,255,0.9)", "textStyle": {"color": "#333"}},
-        "grid": {"top": "15%", "left": "2%", "right": "4%", "bottom": "5%", "containLabel": True},
-        "xAxis": {
-            "type": 'category', "boundaryGap": False, "data": dates,
-            "axisLine": {"show": False}, "axisTick": {"show": False}, "axisLabel": {"color": "#94a3b8"}
-        },
-        "yAxis": {"type": 'value', "splitLine": {"lineStyle": {"type": "dashed", "color": "#f1f5f9"}},
-                  "axisLabel": {"formatter": "${value}", "color": "#94a3b8"}},
-        "series": [{
-            "name": '净资产', "type": 'line', "smooth": True, "lineStyle": {"width": 4, "color": "#16a34a"},
-            "showSymbol": False,
-            "areaStyle": {
-                "opacity": 0.8,
-                "color": {"type": 'linear', "x": 0, "y": 0, "x2": 0, "y2": 1,
-                          "colorStops": [{"offset": 0, "color": 'rgba(22, 163, 74, 0.3)'},
-                                         {"offset": 1, "color": 'rgba(22, 163, 74, 0.0)'}]}
-            },
-            "data": values
-        }]
-    }
-    st_echarts(options=options, height="320px")
-
-
-def get_badge_info(days):
-    if days >= 1825: return "💎", "钻石手"
-    if days >= 1095: return "🥇", "长期主义者"
-    if days >= 365:  return "🥈", "时间的朋友"
-    if days >= 90:   return "🥉", "坚守者"
-    if days >= 30:   return "👀", "观察员"
-    return "🌱", "新手"
-
-
-# ================= 3. 弹窗逻辑 =================
+# ================= 2. 弹窗逻辑 (操作中心) =================
 @st.dialog("📝 操作中心")
 def show_add_modal():
     tab1, tab2, tab3, tab4 = st.tabs(["股票交易", "期权交易", "资金进出", "♻️ 回收站"])
 
-    # Tab 1: 股票
+    # --- 股票 ---
     with tab1:
         t_type = st.radio("交易方向", ["BUY (买入)", "SELL (卖出)"], horizontal=True)
         is_sell = "SELL" in t_type
@@ -411,7 +64,7 @@ def show_add_modal():
                     st.success("已保存")
                     st.rerun()
 
-    # Tab 2: 期权
+    # --- 期权 ---
     with tab2:
         with st.form("add_option_form"):
             c1, c2 = st.columns(2)
@@ -434,7 +87,7 @@ def show_add_modal():
                 st.success("期权交易已保存")
                 st.rerun()
 
-    # Tab 3: 资金
+    # --- 资金 ---
     with tab3:
         mode = st.selectbox("模式", ["资金流水", "余额校准"], label_visibility="collapsed", key="fund_mode_sel")
         if mode == "资金流水":
@@ -470,7 +123,7 @@ def show_add_modal():
                     db.delete_fund_flow(funds.iloc[idx]['id'])
                 st.rerun()
 
-    # Tab 4: 回收站
+    # --- 回收站 ---
     with tab4:
         deleted = db.get_deleted_transactions_last_7_days()
         if not deleted.empty:
@@ -487,23 +140,14 @@ def show_add_modal():
 # ================= 5. 主页面逻辑 =================
 
 # 1. 大师语录
-quotes = [
-    ("流水不争先，争的是滔滔不绝。", "道德经"),
-    ("股市是财富从急躁人手中转移到耐心人手中的工具。", "沃伦·巴菲特"),
-    ("如果你不愿意拥有一只股票十年，那就不要考虑拥有它十分钟。", "沃伦·巴菲特"),
-    ("要赚大钱，不是靠买卖，而是靠等待。", "查理·芒格"),
-    ("反过来想，总是反过来想。", "查理·芒格"),
-    ("长期看，股票的回报率取决于企业的盈利增长。", "彼得·林奇"),
-    ("悲观者正确，乐观者赚钱。", "投资箴言")
-]
-daily_quote = random.choice(quotes)
+daily_quote = cf.get_random_quote()
 st.markdown(f"""<div class="quote-card">“{daily_quote[0]}”<div class="quote-author">—— {daily_quote[1]}</div></div>""",
             unsafe_allow_html=True)
 
 st.subheader("🔭 长期主义驾驶舱 (USD Base)")
 
 # --- 2. 宏观模块 (UI魔改版) ---
-macro_data = get_global_macro_data()
+macro_data = ut.get_global_macro_data()
 
 # 开关按钮
 col_switch, _ = st.columns([1, 4])
@@ -513,44 +157,21 @@ with col_switch:
 mc1, mc2 = st.columns(2)
 
 if "美股" in market_mode:
-    # 🇺🇸 US
     vix, tnx = macro_data['vix'], macro_data['tnx']
-
     vix_str = f"{vix:.2f}" if vix else "N/A"
-    vix_delta, vix_label = "off", "市场情绪"
-    if vix:
-        if vix < 15:
-            vix_delta, vix_label = "inverse", "贪婪 (风险)"
-        elif vix > 30:
-            vix_delta, vix_label = "normal", "恐慌 (机会)"
-
+    vix_delta, vix_label = ("inverse", "贪婪 (风险)") if vix and vix < 15 else (
+        ("normal", "恐慌 (机会)") if vix and vix > 30 else ("off", "市场情绪"))
     mc1.metric("🌊 VIX 恐慌指数 (US)", vix_str, vix_label, delta_color=vix_delta)
-
-    tnx_str = f"{tnx:.2f}%" if tnx else "N/A"
-    mc2.metric("⚓ 10年美债收益率", tnx_str, "全球资产锚", delta_color="off")
-
+    mc2.metric("⚓ 10年美债收益率", f"{tnx:.2f}%" if tnx else "N/A", "全球资产锚", delta_color="off")
 else:
-    # 🇨🇳 CN/HK
     vhsi, cnh = macro_data['vhsi'], macro_data['cnh']
-
     vhsi_str = f"{vhsi:.2f}" if vhsi else "N/A"
-    vhsi_delta, vhsi_label = "off", "市场情绪"
-    if vhsi:
-        if vhsi > 30:
-            vhsi_delta, vhsi_label = "normal", "恐慌 (黄金坑)"
-        elif vhsi < 15:
-            vhsi_delta, vhsi_label = "inverse", "贪婪 (风险)"
-
+    vhsi_delta, vhsi_label = ("inverse", "贪婪 (风险)") if vhsi and vhsi < 15 else (
+        ("normal", "恐慌 (黄金坑)") if vhsi and vhsi > 30 else ("off", "市场情绪"))
     mc1.metric("📉 恒指波幅 (VHSI)", vhsi_str, vhsi_label, delta_color=vhsi_delta)
-
     cnh_str = f"{cnh:.4f}" if cnh else "N/A"
-    cnh_delta, cnh_label = "off", "汇率波动"
-    if cnh:
-        if cnh > 7.25:
-            cnh_delta, cnh_label = "inverse", "贬值 (压力)"
-        elif cnh < 6.9:
-            cnh_delta, cnh_label = "normal", "升值 (流入)"
-
+    cnh_delta, cnh_label = ("inverse", "贬值 (压力)") if cnh and cnh > 7.25 else (
+        ("normal", "升值 (流入)") if cnh and cnh < 6.9 else ("off", "汇率波动"))
     mc2.metric("💱 美元/离岸人民币", cnh_str, cnh_label, delta_color=cnh_delta)
 
 st.markdown("---")
@@ -568,7 +189,7 @@ highest_badge_name = "新手"
 
 if not portfolio_df.empty:
     if 'last_update' not in st.session_state:
-        portfolio_df = update_portfolio_valuation(portfolio_df)
+        portfolio_df = ut.update_portfolio_valuation(portfolio_df)
         st.session_state['portfolio_cache'] = portfolio_df
         st.session_state['last_update'] = datetime.now()
     else:
@@ -579,7 +200,7 @@ if not portfolio_df.empty:
 
     if 'Days Held' in portfolio_df.columns and not portfolio_df['Days Held'].isnull().all():
         max_days_held = portfolio_df['Days Held'].max()
-        highest_badge_icon, highest_badge_name = get_badge_info(max_days_held)
+        highest_badge_icon, highest_badge_name = ut.get_badge_info(max_days_held)
 
 # 渲染右上角勋章
 st.markdown(f"""
@@ -624,7 +245,7 @@ c4.metric("🛡️ 利润安全垫", f"${pnl:,.0f}")
 st.write("")
 st.caption("📈 财富复利曲线 (Total Equity Curve)")
 history_df = db.get_history_data()
-render_history_chart(history_df)
+ui.render_history_chart(history_df)
 
 st.divider()
 
@@ -645,19 +266,19 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
 
         with chart_tab1:
             if not valid_pie.empty:
-                render_echarts_pie(valid_pie, 'Symbol', 'Market Value')
+                ui.render_echarts_pie(valid_pie, 'Symbol', 'Market Value')
             else:
                 st.info("无数据")
         with chart_tab2:
             if not valid_pie.empty:
                 sec_df = valid_pie.groupby('Sector')['Market Value'].sum().reset_index()
-                render_echarts_pie(sec_df, 'Sector', 'Market Value')
+                ui.render_echarts_pie(sec_df, 'Sector', 'Market Value')
             else:
                 st.info("无数据")
         with chart_tab3:
             if not valid_pie.empty:
                 curr_df = valid_pie.groupby('Currency')['Market Value'].sum().reset_index()
-                render_echarts_pie(curr_df, 'Currency', 'Market Value')
+                ui.render_echarts_pie(curr_df, 'Currency', 'Market Value')
             else:
                 st.info("无数据")
 
@@ -669,7 +290,7 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
                 'Type'] == 'STOCK' else 0, axis=1
         )
         portfolio_df['Badge'] = portfolio_df['Days Held'].apply(
-            lambda d: get_badge_info(d)[0] + " " + get_badge_info(d)[1])
+            lambda d: ut.get_badge_info(d)[0] + " " + ut.get_badge_info(d)[1])
 
         display_df = portfolio_df.sort_values('Market Value', ascending=False)
 
