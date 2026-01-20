@@ -1,9 +1,15 @@
 import sqlite3
 import pandas as pd
+import sys
+import os
 from datetime import datetime, timedelta
 
-DB_FILE = 'investments.db'
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+DB_FILE = os.path.join(BASE_DIR, "investments.db")
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)

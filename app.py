@@ -26,7 +26,7 @@ st.markdown("""
     /* 侧边栏隐藏 */
     section[data-testid="stSidebar"] { display: none; }
 
-    /* 仪表盘卡片渲染 */
+    /* 仪表盘卡片渲染 - 增加轻微悬浮动效 */
     div[data-testid="stMetric"] {
         background-color: #ffffff;
         padding: 15px 20px;
@@ -36,9 +36,10 @@ st.markdown("""
         transition: all 0.3s ease;
     }
     div[data-testid="stMetric"]:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 16px rgba(0,0,0,0.08);
+        transform: translateY(-4px) scale(1.01); /* 鼠标悬浮时轻微上浮放大 */
+        box-shadow: 0 10px 20px rgba(0,0,0,0.1);
         border-color: #d1d5db;
+        z-index: 10;
     }
 
     /* 宏观指标微调 */
@@ -49,7 +50,7 @@ st.markdown("""
 
     /* 净资产大卡片特殊样式 */
     div.net-asset-card div[data-testid="stMetric"] {
-        background: linear-gradient(to right bottom, #ffffff, #f0fdf4);
+        background: linear-gradient(135deg, #ffffff 0%, #f0fdf4 100%);
         border-left: 5px solid #16a34a; 
     }
 
@@ -59,8 +60,14 @@ st.markdown("""
     }
     div.stButton:last-of-type > button {
         border-radius: 50%; width: 60px; height: 60px; font-size: 24px;
-        background-color: #FF4B4B; color: white; box-shadow: 0px 4px 10px rgba(0,0,0,0.3); border: none;
+        background-color: #FF4B4B; color: white; box-shadow: 0px 4px 15px rgba(255, 75, 75, 0.4); border: none;
+        transition: transform 0.2s;
     }
+    div.stButton:last-of-type > button:hover {
+        transform: scale(1.1) rotate(90deg); /* 悬浮时旋转放大 */
+    }
+
+    /* 保护弹窗内按钮 */
     div[data-testid="stDialog"] div.stButton { position: static !important; width: auto !important; }
     div[data-testid="stDialog"] button { border-radius: 4px !important; width: auto !important; height: auto !important; font-size: 1rem !important; box-shadow: none !important; }
 </style>
@@ -113,7 +120,7 @@ def get_realtime_price(symbol):
 
 @st.cache_data(ttl=1800)
 def get_macro_data():
-    """获取宏观指标 (Yahoo Finance)"""
+    """获取宏观指标"""
     vix, tnx = None, None
     try:
         try:
@@ -137,7 +144,7 @@ def get_macro_data():
 
 @st.cache_data(ttl=86400)
 def get_stock_sector(symbol):
-    """获取股票行业标签 (自动汉化)"""
+    """获取股票行业标签"""
     symbol = symbol.lower().strip()
     yf_symbol = symbol
     if symbol.isdigit() and len(symbol) == 5:
@@ -178,7 +185,7 @@ def calculate_option_intrinsic_value(option_row, underlying_price):
 
 
 def update_portfolio_valuation(df):
-    """统一汇率 + 期权估值 + 行业标签 + 币种标记"""
+    """统一汇率 + 期权估值 + 行业 + 币种"""
     rates = get_exchange_rates()
     current_prices = []
     mkt_values_usd = []
@@ -193,11 +200,9 @@ def update_portfolio_valuation(df):
 
         price = get_realtime_price(raw_sym)
 
-        # 行业
         sec = get_stock_sector(raw_sym) if row['Type'] == 'STOCK' else "📜 期权"
         sectors.append(sec)
 
-        # 估值
         final_price_native = 0
         if row['Type'] == 'STOCK':
             final_price_native = price if price else (row['Avg Cost'] or 0)
@@ -213,6 +218,41 @@ def update_portfolio_valuation(df):
     df['Sector'] = sectors
     df['Currency'] = currencies
     return df
+
+
+# 🔥 特效核心：高级饼图绘制函数
+def plot_fancy_pie(df, names_col, values_col, color_seq=None):
+    """绘制带高级悬浮特效的饼图"""
+    fig = px.pie(
+        df,
+        values=values_col,
+        names=names_col,
+        hole=0.5,  # 甜甜圈风格
+        color_discrete_sequence=color_seq or px.colors.qualitative.Pastel  # 默认柔和色系
+    )
+
+    fig.update_traces(
+        textposition='inside',
+        textinfo='percent+label',
+        insidetextorientation='horizontal',
+        # ✨ 特效关键：自定义悬浮提示框 (HTML)
+        hovertemplate="<b>%{label}</b><br>💰 市值: $%{value:,.0f}<br>📊 占比: %{percent}",
+        # ✨ 特效关键：白色描边，增加立体分割感
+        marker=dict(line=dict(color='#ffffff', width=2))
+    )
+
+    fig.update_layout(
+        showlegend=False,
+        margin=dict(t=10, b=10, l=10, r=10),
+        # ✨ 特效关键：悬浮标签样式
+        hoverlabel=dict(
+            bgcolor="white",
+            font_size=14,
+            font_family="Arial",
+            bordercolor="#e0e0e0"
+        )
+    )
+    return fig
 
 
 # ================= 3. 弹窗逻辑 =================
@@ -384,7 +424,6 @@ with st.container():
 
 st.write("")
 c1, c2, c3, c4 = st.columns(4)
-# === 修复点：这里使用了 lev_ratio，与上方定义一致 ===
 c1.metric("⚖️ 杠杆率", f"{lev_ratio:.2f}x", delta="安全" if lev_ratio <= 1.2 else "偏高",
           delta_color="inverse" if lev_ratio > 1.2 else "normal")
 c2.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%")
@@ -410,8 +449,8 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
 
         with chart_tab1:
             if not valid_pie.empty:
-                fig = px.pie(valid_pie, values='Market Value', names='Symbol', hole=0.5)
-                fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=250, showlegend=False)
+                # 🔥 调用新函数：带特效
+                fig = plot_fancy_pie(valid_pie, 'Symbol', 'Market Value')
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("无数据")
@@ -419,8 +458,7 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
         with chart_tab2:
             if not valid_pie.empty:
                 sec_df = valid_pie.groupby('Sector')['Market Value'].sum().reset_index()
-                fig = px.pie(sec_df, values='Market Value', names='Sector', hole=0.5)
-                fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=250)
+                fig = plot_fancy_pie(sec_df, 'Sector', 'Market Value')
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("无数据")
@@ -428,9 +466,8 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
         with chart_tab3:
             if not valid_pie.empty:
                 curr_df = valid_pie.groupby('Currency')['Market Value'].sum().reset_index()
-                fig = px.pie(curr_df, values='Market Value', names='Currency', hole=0.5,
-                             color_discrete_sequence=px.colors.qualitative.Pastel)
-                fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=250)
+                # 币种尝试用特定色系
+                fig = plot_fancy_pie(curr_df, 'Currency', 'Market Value', px.colors.qualitative.Pastel)
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("无数据")
@@ -443,19 +480,24 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
                 'Type'] == 'STOCK' else 0, axis=1
         )
 
+        # 🔥 新增：状态列 (红涨绿跌)
+        portfolio_df['Status'] = portfolio_df['PnL $'].apply(
+            lambda x: "🔴 盈利" if x > 0 else ("🟢 亏损" if x < 0 else "⚪ 持平"))
+
         display_df = portfolio_df.sort_values('Market Value', ascending=False)
 
         st.dataframe(
             display_df,
-            column_order=["Sector", "Symbol", "Quantity", "Avg Cost", "Price", "Market Value", "Safety Margin",
-                          "Days Held"],
+            column_order=["Sector", "Symbol", "Status", "Quantity", "Avg Cost", "Price", "Market Value",
+                          "Safety Margin", "Days Held"],
             column_config={
                 "Sector": st.column_config.TextColumn("赛道", width="small"),
                 "Symbol": st.column_config.TextColumn("代码", width="small"),
+                "Status": st.column_config.TextColumn("状态", width="small"),  # 新增状态列
                 "Quantity": st.column_config.NumberColumn("持仓", format="%.0f"),
                 "Avg Cost": st.column_config.NumberColumn("成本", format="%.2f"),
-                "Price": st.column_config.NumberColumn("现价/内在", format="%.2f"),
-                "Market Value": st.column_config.NumberColumn("美元市值", format="$%.0f"),
+                "Price": st.column_config.NumberColumn("现价", format="%.2f"),
+                "Market Value": st.column_config.NumberColumn("市值", format="$%.0f"),
                 "Safety Margin": st.column_config.ProgressColumn("安全边际", format="%.1f%%", min_value=0,
                                                                  max_value=100),
                 "Days Held": st.column_config.NumberColumn("持有", format="%d天")
