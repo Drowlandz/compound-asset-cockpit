@@ -144,7 +144,7 @@ daily_quote = cf.get_random_quote()
 st.markdown(f"""<div class="quote-card">“{daily_quote[0]}”<div class="quote-author">—— {daily_quote[1]}</div></div>""",
             unsafe_allow_html=True)
 
-st.subheader("🔭 长期主义驾驶舱 (USD Base)")
+st.subheader("🔭 长期主义驾驶舱")
 
 # --- 2. 宏观模块 (UI魔改版) ---
 macro_data = ut.get_global_macro_data()
