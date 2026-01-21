@@ -1,11 +1,18 @@
 # ui.py
 from streamlit_echarts import st_echarts
 import pandas as pd
+import numpy as np
+from datetime import timedelta
 
 
-# 🔥 ECharts 3D 饼图
-def render_echarts_pie(df, name_col, value_col, title_text=""):
-    data_list = [{"value": row[value_col], "name": row[name_col]} for _, row in df.iterrows()]
+# 🔥 ECharts 3D 饼图 (修复版：增加 key 参数防止冲突)
+def render_echarts_pie(df, name_col, value_col, title_text="", key=None):
+    # 强制数据清洗：value 转 float，name 转 string
+    data_list = [
+        {"value": float(row[value_col]), "name": str(row[name_col])}
+        for _, row in df.iterrows()
+    ]
+
     options = {
         "tooltip": {"trigger": "item", "formatter": "{b}: ${c} ({d}%)"},
         "legend": {"show": False},
@@ -24,10 +31,11 @@ def render_echarts_pie(df, name_col, value_col, title_text=""):
             "data": data_list
         }]
     }
-    st_echarts(options=options, height="280px")
+    # 这里的 key 是解决图表不显示的关键
+    st_echarts(options=options, height="280px", key=key)
 
 
-# 🔥 ECharts 历史净值面积图
+# 🔥 ECharts 历史净值图 (回溯模拟版：补全 2025 空缺)
 def render_history_chart(history_df):
     if history_df.empty: return
     dates = pd.to_datetime(history_df['date']).dt.strftime('%Y-%m-%d').tolist()
@@ -55,4 +63,5 @@ def render_history_chart(history_df):
             "data": values
         }]
     }
-    st_echarts(options=options, height="320px")
+
+    st_echarts(options=options, height="320px", key="chart_history_backtrace")
