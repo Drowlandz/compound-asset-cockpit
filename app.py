@@ -203,11 +203,11 @@ if "美股" in market_mode:
     mc1.metric("🌊 VIX 恐慌指数 (US)", vix_str, vix_label, delta_color=vix_delta)
     mc2.metric("⚓ 10年美债收益率", f"{tnx:.2f}%" if tnx else "N/A", "全球资产锚", delta_color="off")
 else:
-    vhsi, cnh = macro_data['vhsi'], macro_data['cnh']
-    vhsi_str = f"{vhsi:.2f}" if vhsi else "N/A"
-    vhsi_delta, vhsi_label = ("inverse", "贪婪 (风险)") if vhsi and vhsi < 15 else (
-        ("normal", "恐慌 (黄金坑)") if vhsi and vhsi > 30 else ("off", "市场情绪"))
-    mc1.metric("📉 恒指波幅 (VHSI)", vhsi_str, vhsi_label, delta_color=vhsi_delta)
+    hsbfix, cnh = macro_data['hsbfix'], macro_data['cnh']
+    hsbfix_str = f"{hsbfix:.2f}" if hsbfix else "N/A"
+    hsbfix_delta, hsbfix_label = ("inverse", "贪婪 (风险)") if hsbfix and hsbfix < 15 else (
+        ("normal", "恐慌 (黄金坑)") if hsbfix and hsbfix > 30 else ("off", "市场情绪"))
+    mc1.metric("📉 恒指波幅 (hsbfix)", hsbfix_str, hsbfix_label, delta_color=hsbfix_delta)
     cnh_str = f"{cnh:.4f}" if cnh else "N/A"
     cnh_delta, cnh_label = ("inverse", "贬值 (压力)") if cnh and cnh > 7.25 else (
         ("normal", "升值 (流入)") if cnh and cnh < 6.9 else ("off", "汇率波动"))
