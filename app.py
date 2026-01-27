@@ -19,7 +19,7 @@ def show_add_modal():
 
     # --- 股票 ---
     with tab1:
-        t_type = st.radio("交易方向", ["BUY (买入)", "SELL (卖出)"], horizontal=True)
+        t_type = st.radio("交易方向", ["BUY", "SELL"], horizontal=True)
         is_sell = "SELL" in t_type
         current_holdings = db.get_portfolio_summary()
         valid_holdings = []
@@ -192,10 +192,10 @@ st.subheader("🔭 长期主义驾驶舱")
 macro_data = ut.get_global_macro_data()
 col_switch, _ = st.columns([1, 4])
 with col_switch:
-    market_mode = st.radio("Market View", ["🇺🇸 美股气候", "🇨🇳 中国资产"], horizontal=True, label_visibility="collapsed")
+    market_mode = st.radio("Market View", ["US", "CN"], horizontal=True, label_visibility="collapsed")
 
 mc1, mc2 = st.columns(2)
-if "美股" in market_mode:
+if "US" in market_mode:
     vix, tnx = macro_data['vix'], macro_data['tnx']
     vix_str = f"{vix:.2f}" if vix else "N/A"
     vix_delta, vix_label = ("inverse", "贪婪 (风险)") if vix and vix < 15 else (

@@ -11,22 +11,55 @@ CUSTOM_CSS = """
     header {visibility: hidden;}
     section[data-testid="stSidebar"] { display: none; }
 
-    /* === 1. 魔改切换按钮 (Segmented Control) === */
-    div[role="radiogroup"] label > div:first-child { display: none; }
-    div[role="radiogroup"] {
-        background-color: #f1f5f9; padding: 4px; border-radius: 12px;
-        display: inline-flex; border: 1px solid #e2e8f0; gap: 0px;
+    /* 2. 隐藏 Streamlit 默认的 Radio 圆圈，改为胶囊按钮 */
+    div[data-testid="stRadio"] > label {
+        display: none !important; /* 隐藏 Label 文字（如果有） */
     }
-    div[role="radiogroup"] label {
-        border: none; padding: 8px 20px; border-radius: 8px; margin: 0;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        color: #64748b; font-weight: 500; cursor: pointer;
-        display: flex; align-items: center; justify-content: center;
+    
+    /* 容器背景 (灰色底槽) */
+    div[data-testid="stRadio"] > div[role="radiogroup"] {
+        background-color: #f1f5f9; /* Slate-100 */
+        padding: 4px;
+        border-radius: 8px;
+        display: inline-flex;
+        width: auto;
+        gap: 0px; /* 紧挨着 */
     }
-    div[role="radiogroup"] label:hover { background-color: #ffffff; box-shadow: 0 2px 5px rgba(0,0,0,0.05); color: #0f172a; }
-    div[role="radiogroup"] div[data-checked="true"] {
-        background-color: #ffffff !important; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        border-radius: 8px; color: #0f172a !important; font-weight: bold; transform: scale(1.02);
+
+    /* 每一个选项 (默认状态) */
+    div[data-testid="stRadio"] label[data-baseweb="radio"] {
+        background-color: transparent;
+        border: none;
+        margin: 0 !important;
+        padding: 4px 16px !important; /* 紧凑 Padding */
+        border-radius: 6px;
+        transition: all 0.2s ease;
+        cursor: pointer;
+    }
+    
+    /* 隐藏原生 Input 圆圈 */
+    div[data-testid="stRadio"] label[data-baseweb="radio"] > div:first-child {
+        display: none; 
+    }
+    
+    /* 文字样式 */
+    div[data-testid="stRadio"] label[data-baseweb="radio"] > div {
+        color: #64748b; /* Slate-500 */
+        font-weight: 500;
+        font-size: 14px;
+    }
+
+    /* 🔥 选中状态 (利用 :has 选择器实现阴影卡片效果) */
+    div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) {
+        background-color: #ffffff;
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1); /* 阴影 */
+        color: #0f172a;
+    }
+    
+    /* 选中状态的文字颜色 */
+    div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) > div {
+        color: #0f172a !important; /* Slate-900 */
+        font-weight: 600;
     }
 
     /* === 2. 荣誉勋章 (右上角悬浮 + 呼吸灯) === */
