@@ -186,7 +186,7 @@ daily_quote = cf.get_random_quote()
 st.markdown(f"""<div class="quote-card">“{daily_quote[0]}”<div class="quote-author">—— {daily_quote[1]}</div></div>""",
             unsafe_allow_html=True)
 
-st.subheader("🔭 长期主义驾驶舱 (USD Base)")
+st.subheader("🔭 长期主义驾驶舱")
 
 # --- 2. 宏观模块 ---
 macro_data = ut.get_global_macro_data()
@@ -350,10 +350,35 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
 
 st.divider()
 
-# --- 5. 财富复利曲线 (移到了这里) ---
-st.caption("📈 财富复利曲线 (Total Equity Curve)")
+# --- 5. 财富复利曲线 (极简版) ---
+col_h1, col_h2 = st.columns([1, 4])
+with col_h1:
+    st.caption("📈 财富复利曲线")
+with col_h2:
+    # 极简切换：$ vs %
+    chart_mode_sel = st.radio(
+        "图表模式",
+        ["$", "%"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="chart_mode_toggle"
+    )
+
+# 映射逻辑
+mode_key = 'value' if chart_mode_sel == '$' else 'pct'
+
+# 获取数据并渲染
 history_df = db.get_history_data()
-ui.render_history_chart(history_df)
+# # 🔥🔥🔥 【诊断探针】开始 🔥🔥🔥
+# st.write("🔍 诊断模式：查看底层数据")
+# # 强制把 total_invested 转成数字看看到底是不是 0
+# history_df['total_invested'] = pd.to_numeric(history_df['total_invested'], errors='coerce').fillna(0)
+# # 计算一列临时的收益率看看
+# history_df['debug_yield'] = (history_df['total_asset'] - history_df['total_invested']) / history_df['total_invested'] * 100
+# st.dataframe(history_df, use_container_width=True)
+# # 🔥🔥🔥 【诊断探针】结束 🔥🔥🔥
+
+ui.render_history_chart(history_df, mode=mode_key)
 
 st.divider()
 
