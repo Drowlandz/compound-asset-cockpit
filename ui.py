@@ -14,20 +14,20 @@ def render_echarts_pie(df, name_col, value_col, title_text="", key=None):
     # 3. 生成数据列表 (此时数据已经是排好序的)
     data_list = []
     for _, row in df_sorted.iterrows():
-        val = float(row[value_col])
+        val = int(row[value_col])
         pct = (val / total_val * 100) if total_val > 0 else 0
         # 补齐空格保持视觉对齐 (可选)
         name_with_pct = f"{str(row[name_col])}  {pct:.1f}%"
         data_list.append({"value": val, "name": name_with_pct})
 
     options = {
-        "tooltip": {"trigger": "item", "formatter": "{b}: ${c}"},
+        # 🔥 1. 彻底关闭悬浮提示框 (Tooltip)，防止和中间文字重复
+        "tooltip": {"show": False},
 
-        # 图例设置：右下角垂直排列，自然继承数据的排序
         "legend": {
             "show": True,
             "orient": "vertical",
-            "right": "2%",
+            "right": "0%",
             "bottom": "5%",
             "itemGap": 10,
             "textStyle": {"fontSize": 12, "color": "#475569", "fontWeight": "bold"}
@@ -36,20 +36,33 @@ def render_echarts_pie(df, name_col, value_col, title_text="", key=None):
         "series": [{
             "name": title_text,
             "type": "pie",
-            "radius": ["45%", "75%"],
-            "center": ["35%", "50%"],  # 饼图靠左，给排序图例留空间
+            "radius": ["40%", "70%"],
+            "center": ["40%", "50%"],
+
+            # 防止标签重叠的算法，关掉能提升一点点性能
+            "avoidLabelOverlap": False,
+
             "itemStyle": {"borderRadius": 8, "borderColor": "#fff", "borderWidth": 2},
-            "label": {"show": False},
+
+            # 🔥 2. 核心修正：默认状态下，把标签“藏”在圆心，而不是扇区外面
+            "label": {
+                "show": False,
+                "position": "center"  # 关键！如果不写这个，hover时可能会在扇区旁边也闪现文字
+            },
+
             "emphasis": {
                 "label": {
                     "show": True,
-                    "fontSize": 16,
+                    "fontSize": 18,
                     "fontWeight": "bold",
+                    # 这里定义中间显示什么：{b}=名字, \n=换行, {d}=百分比
                     "formatter": "{b}",
                     "color": "#333"
                 },
-                "scale": True, "scaleSize": 15,
-                "itemStyle": {"shadowBlur": 20, "shadowOffsetX": 0, "shadowColor": "rgba(0, 0, 0, 0.2)"}
+                # 放大效果
+                "scale": True,
+                "scaleSize": 10,
+                "itemStyle": {"shadowBlur": 10, "shadowOffsetX": 0, "shadowColor": "rgba(0, 0, 0, 0.2)"}
             },
             "data": data_list
         }]
