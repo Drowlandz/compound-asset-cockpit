@@ -1,3 +1,5 @@
+from operator import truediv
+
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
@@ -321,9 +323,10 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
         st.caption("持仓明细 (自动折算 USD)")
         portfolio_df['PnL $'] = portfolio_df['Market Value'] - portfolio_df['Total Cost']
         portfolio_df['Safety Margin'] = portfolio_df.apply(
-            lambda x: max(0, (x['Price'] - x['Avg Cost']) / x['Price'] * 100) if x['Price'] > 0 and x[
-                'Type'] == 'STOCK' else 0, axis=1
+            lambda x: (x['Price'] - x['Avg Cost']) / x['Price'] * 100
+            if x['Price'] > 0 and x['Type'] == 'STOCK' else 0, axis=1
         )
+
         portfolio_df['Badge'] = portfolio_df['Days Held'].apply(
             lambda d: ut.get_badge_info(d)[0] + " " + ut.get_badge_info(d)[1])
 
@@ -341,7 +344,7 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
                 "Price": st.column_config.NumberColumn("现价", format="%.2f"),
                 "Market Value": st.column_config.NumberColumn("市值", format="$%.0f"),
                 "Safety Margin": st.column_config.ProgressColumn("安全边际", format="%.1f%%", min_value=0,
-                                                                 max_value=100),
+                                                                 max_value=100, color="yellow"),
                 "Badge": st.column_config.TextColumn("荣誉", width="small"),
                 "Days Held": st.column_config.NumberColumn("天数", format="%d")
             },
@@ -382,19 +385,116 @@ ui.render_history_chart(history_df, mode=mode_key)
 
 st.divider()
 
-# 流水
+# ================= 6. 交易流水 (持仓优先 + 市值排序) =================
 st.subheader("📋 交易流水")
-at = db.get_all_transactions(False)
-if not at.empty:
-    edited = st.data_editor(at[['id', 'date', 'symbol', 'type', 'quantity', 'price', 'note']], hide_index=True,
-                            use_container_width=True, key="trans_editor", num_rows="dynamic")
-    if st.session_state.get("trans_editor", {}).get("deleted_rows"):
-        for idx in st.session_state["trans_editor"]["deleted_rows"]:
-            db.soft_delete_transaction(int(at.iloc[idx]['id']))
-            st.cache_data.clear()
-            if 'portfolio_cache' in st.session_state: del st.session_state['portfolio_cache']
-        st.rerun()
 
-# 悬浮按钮
+# 1. 获取所有交易
+all_trans = db.get_all_transactions(False)
+
+if not all_trans.empty:
+    # 强制转换日期格式，避免 data_editor 报错
+    all_trans['date'] = pd.to_datetime(all_trans['date'])
+
+    # 2. 获取当前持仓信息 (修复点：优先读取带市值的缓存数据)
+    # 之前报错是因为重新调用的 db.get_portfolio_summary() 只有成本没有市值
+    if 'portfolio_cache' in st.session_state and not st.session_state['portfolio_cache'].empty:
+        portfolio_df = st.session_state['portfolio_cache']
+    else:
+        # 如果缓存也没有（极少见），才去读原始数据库
+        portfolio_df = db.get_portfolio_summary()
+
+    # 提取持仓 symbol 及其市值，构建字典 {Symbol: MarketValue}
+    active_holdings = {}
+    if not portfolio_df.empty:
+        # 防御性处理：确保 Quantity 列存在并转为数字
+        if 'Quantity' in portfolio_df.columns:
+            portfolio_df['Quantity'] = pd.to_numeric(portfolio_df['Quantity'], errors='coerce').fillna(0)
+
+        # 🔥 修复核心：先检查 Market Value 列是否存在
+        if 'Market Value' in portfolio_df.columns:
+            portfolio_df['Market Value'] = pd.to_numeric(portfolio_df['Market Value'], errors='coerce').fillna(0)
+        else:
+            # 如果是原始数据没有市值，就填 0，保证不报错
+            portfolio_df['Market Value'] = 0.0
+
+        # 筛选出真正持有的 (数量 > 0)
+        valid_p = portfolio_df[portfolio_df['Quantity'] > 0.01]
+        if not valid_p.empty:
+            active_holdings = dict(zip(valid_p['Symbol'], valid_p['Market Value']))
+
+    # 3. 将交易记录拆分为 [持仓股] 和 [非持仓股]
+    all_symbols = all_trans['symbol'].unique().tolist()
+
+    active_symbols = [s for s in all_symbols if s in active_holdings]  # 当前持仓
+    inactive_symbols = [s for s in all_symbols if s not in active_holdings]  # 已清仓
+
+    # 4. 对持仓股按市值降序排序 (重仓在前)
+    active_symbols.sort(key=lambda s: active_holdings.get(s, 0), reverse=True)
+
+    # --- A. 渲染持仓股流水 (分个股折叠) ---
+    for sym in active_symbols:
+        df_sym = all_trans[all_trans['symbol'] == sym].sort_values('date', ascending=False)
+        count = len(df_sym)
+        mv = active_holdings.get(sym, 0)
+
+        # 标题显示市值
+        with st.expander(f"📦 {sym} (市值 ${mv:,.0f} · {count} 笔)"):
+            edited = st.data_editor(
+                df_sym[['id', 'date', 'type', 'quantity', 'price', 'note']],
+                hide_index=True,
+                use_container_width=True,
+                key=f"editor_{sym}",
+                num_rows="fixed",
+                column_config={
+                    "id": None,
+                    "date": st.column_config.DateColumn("日期"),
+                    "type": st.column_config.TextColumn("方向", width="small"),
+                    "quantity": st.column_config.NumberColumn("数量"),
+                    "price": st.column_config.NumberColumn("价格", format="$%.2f"),
+                    "note": st.column_config.TextColumn("备注")
+                }
+            )
+            # 删除逻辑
+            if st.session_state.get(f"editor_{sym}", {}).get("deleted_rows"):
+                for idx in st.session_state[f"editor_{sym}"]["deleted_rows"]:
+                    db.soft_delete_transaction(int(df_sym.iloc[idx]['id']))
+                st.cache_data.clear()
+                if 'portfolio_cache' in st.session_state: del st.session_state['portfolio_cache']
+                st.rerun()
+
+    # --- B. 渲染非持仓/已清仓流水 (统一折叠) ---
+    if inactive_symbols:
+        df_inactive = all_trans[all_trans['symbol'].isin(inactive_symbols)].sort_values('date', ascending=False)
+        count_inactive = len(df_inactive)
+
+        with st.expander(f"🗄️ 其他 / 已清仓 ({count_inactive} 笔交易)"):
+            edited_inactive = st.data_editor(
+                df_inactive[['id', 'date', 'symbol', 'type', 'quantity', 'price', 'note']],
+                hide_index=True,
+                use_container_width=True,
+                key="editor_inactive",
+                num_rows="fixed",
+                column_config={
+                    "id": None,
+                    "date": st.column_config.DateColumn("日期"),
+                    "symbol": st.column_config.TextColumn("代码", width="small"),
+                    "type": st.column_config.TextColumn("方向", width="small"),
+                    "quantity": st.column_config.NumberColumn("数量"),
+                    "price": st.column_config.NumberColumn("价格", format="$%.2f"),
+                    "note": st.column_config.TextColumn("备注")
+                }
+            )
+            # 删除逻辑
+            if st.session_state.get("editor_inactive", {}).get("deleted_rows"):
+                for idx in st.session_state["editor_inactive"]["deleted_rows"]:
+                    db.soft_delete_transaction(int(df_inactive.iloc[idx]['id']))
+                st.cache_data.clear()
+                if 'portfolio_cache' in st.session_state: del st.session_state['portfolio_cache']
+                st.rerun()
+
+else:
+    st.info("暂无交易记录，快去记一笔吧！")
+
+# 底部悬浮按钮
 st.markdown('<span id="fab-anchor"></span>', unsafe_allow_html=True)
 if st.button("➕", key="fab_main"): show_add_modal()
