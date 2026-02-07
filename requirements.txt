@@ -1,0 +1,6 @@
+streamlit
+pandas
+streamlit-echarts
+requests
+yfinance
+numpy
