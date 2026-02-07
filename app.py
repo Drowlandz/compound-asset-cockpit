@@ -344,7 +344,7 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
                 "Price": st.column_config.NumberColumn("现价", format="%.2f"),
                 "Market Value": st.column_config.NumberColumn("市值", format="$%.0f"),
                 "Safety Margin": st.column_config.ProgressColumn("安全边际", format="%.1f%%", min_value=0,
-                                                                 max_value=100, color="yellow"),
+                                                                 max_value=100),
                 "Badge": st.column_config.TextColumn("荣誉", width="small"),
                 "Days Held": st.column_config.NumberColumn("天数", format="%d")
             },
