@@ -3,8 +3,12 @@ from streamlit_echarts import st_echarts
 import pandas as pd
 import numpy as np      # 🔥 必须加这行，否则数学计算会报错
 
-# 🔥 ECharts 3D 饼图 (修复版：右下角图例按占比从大到小排序)
-def render_echarts_pie(df, name_col, value_col, title_text="", key=None):
+# 🔥 ECharts 3D 饼图 (支持隐私脱敏 mask_value)
+def render_echarts_pie(df, name_col, value_col, title_text="", key=None, mask_value=False):
+    """
+    增加了 mask_value 参数以兼容 app.py 的调用。
+    当前配置下 tooltip 已关闭，且标签只显示名称和百分比，本身已具备隐私性。
+    """
     # 🔥 1. 核心修改：按金额/占比从大到小排序
     df_sorted = df.sort_values(by=value_col, ascending=False)
 
@@ -16,12 +20,12 @@ def render_echarts_pie(df, name_col, value_col, title_text="", key=None):
     for _, row in df_sorted.iterrows():
         val = int(row[value_col])
         pct = (val / total_val * 100) if total_val > 0 else 0
-        # 补齐空格保持视觉对齐 (可选)
+        # 补齐空格保持视觉对齐
         name_with_pct = f"{str(row[name_col])}  {pct:.1f}%"
         data_list.append({"value": val, "name": name_with_pct})
 
     options = {
-        # 🔥 1. 彻底关闭悬浮提示框 (Tooltip)，防止和中间文字重复
+        # 🔥 1. 彻底关闭悬浮提示框 (Tooltip)，防止显示具体金额
         "tooltip": {"show": False},
 
         "legend": {
@@ -39,15 +43,14 @@ def render_echarts_pie(df, name_col, value_col, title_text="", key=None):
             "radius": ["40%", "70%"],
             "center": ["40%", "50%"],
 
-            # 防止标签重叠的算法，关掉能提升一点点性能
             "avoidLabelOverlap": False,
 
             "itemStyle": {"borderRadius": 8, "borderColor": "#fff", "borderWidth": 2},
 
-            # 🔥 2. 核心修正：默认状态下，把标签“藏”在圆心，而不是扇区外面
+            # 🔥 2. 核心修正：默认状态下，把标签“藏”在圆心
             "label": {
                 "show": False,
-                "position": "center"  # 关键！如果不写这个，hover时可能会在扇区旁边也闪现文字
+                "position": "center"
             },
 
             "emphasis": {
@@ -55,11 +58,10 @@ def render_echarts_pie(df, name_col, value_col, title_text="", key=None):
                     "show": True,
                     "fontSize": 18,
                     "fontWeight": "bold",
-                    # 这里定义中间显示什么：{b}=名字, \n=换行, {d}=百分比
+                    # 这里定义中间显示什么：{b}=名字(含百分比)
                     "formatter": "{b}",
                     "color": "#333"
                 },
-                # 放大效果
                 "scale": True,
                 "scaleSize": 10,
                 "itemStyle": {"shadowBlur": 10, "shadowOffsetX": 0, "shadowColor": "rgba(0, 0, 0, 0.2)"}
@@ -71,16 +73,16 @@ def render_echarts_pie(df, name_col, value_col, title_text="", key=None):
     st_echarts(options=options, height="280px", key=key)
 
 
-# ui.py (全量替换 render_history_chart 函数)
-
-def render_history_chart(history_df, mode='value'):
+# 🔥 历史曲线图 (支持隐私脱敏 mask_value)
+def render_history_chart(history_df, mode='value', mask_value=False):
     """
-    稳健版：移除复杂特效，强制显示数据点，确保图表 100% 能显示。
+    稳健版：移除复杂特效，强制显示数据点。
+    增加 mask_value 逻辑：隐藏金额数值。
     """
     if history_df is None or history_df.empty:
         return
 
-    # 1. 数据清洗 (保持最稳健的逻辑)
+    # 1. 数据清洗
     try:
         df = history_df.copy()
         df['date'] = pd.to_datetime(df['date'])
@@ -102,12 +104,22 @@ def render_history_chart(history_df, mode='value'):
         assets = [float(round(x, 2)) for x in df['total_asset'].values]
         principals = [float(round(x, 2)) for x in df['total_invested'].values]
 
+        # 🔥🔥🔥 隐私模式核心逻辑 🔥🔥🔥
+        if mask_value:
+            # 脱敏状态：显示星号
+            tooltip_fmt = "<b>📅 {b}</b><br/>💰 净资产: <b>****</b><br/>🏦 总本金: <b>****</b>"
+            y_axis_label = "****"
+        else:
+            # 正常状态：显示金额
+            tooltip_fmt = "<b>📅 {b}</b><br/>💰 净资产: <b>${c0}</b><br/>🏦 总本金: <b>${c1}</b>"
+            y_axis_label = "${value}"
+
         options = {
             "tooltip": {
                 "trigger": 'axis',
                 "backgroundColor": "rgba(255,255,255,0.95)",
                 "textStyle": {"color": "#333"},
-                "formatter": "<b>📅 {b}</b><br/>💰 净资产: <b>${c0}</b><br/>🏦 总本金: <b>${c1}</b>"
+                "formatter": tooltip_fmt  # 应用格式
             },
             "legend": {"data": ["净资产", "总本金"], "top": "0%"},
             "grid": {"top": "15%", "left": "2%", "right": "4%", "bottom": "5%", "containLabel": True},
@@ -123,16 +135,16 @@ def render_history_chart(history_df, mode='value'):
                 "type": 'value',
                 "scale": True,
                 "splitLine": {"lineStyle": {"type": "dashed", "color": "#f1f5f9"}},
-                "axisLabel": {"formatter": "${value}", "color": "#94a3b8"}
+                "axisLabel": {"formatter": y_axis_label, "color": "#94a3b8"} # 应用脱敏标签
             },
             "series": [
                 {
                     "name": "净资产",
                     "type": "line",
                     "smooth": 0.2,
-                    "showSymbol": True,  # 🔥 强制显示点
+                    "showSymbol": True,
                     "symbolSize": 6,
-                    "lineStyle": {"width": 3, "color": "#16a34a"},  # 绿色实线
+                    "lineStyle": {"width": 3, "color": "#16a34a"},
                     "itemStyle": {"color": "#16a34a"},
                     "data": assets
                 },
@@ -141,7 +153,7 @@ def render_history_chart(history_df, mode='value'):
                     "type": "line",
                     "smooth": 0.2,
                     "showSymbol": False,
-                    "lineStyle": {"width": 2, "color": "#94a3b8", "type": "dashed"},  # 灰色虚线
+                    "lineStyle": {"width": 2, "color": "#94a3b8", "type": "dashed"},
                     "itemStyle": {"color": "#94a3b8"},
                     "data": principals
                 }
@@ -150,17 +162,16 @@ def render_history_chart(history_df, mode='value'):
 
     # ================= 模式 B: 收益率百分比 (%) =================
     else:
+        # 收益率本身就是相对值，不需要脱敏，保持原样即可
         yields = []
         for i, row in df.iterrows():
             inv = float(row['total_invested'])
             ass = float(row['total_asset'])
 
-            # 收益率计算
             val = 0.0
             if inv > 1.0:
                 val = (ass - inv) / inv * 100.0
 
-            # 过滤异常值
             if np.isnan(val) or np.isinf(val):
                 val = 0.0
 
@@ -188,14 +199,13 @@ def render_history_chart(history_df, mode='value'):
                 "splitLine": {"lineStyle": {"type": "dashed", "color": "#f1f5f9"}},
                 "axisLabel": {"formatter": "{value}%", "color": "#94a3b8"}
             },
-            # 🔥 移除 visualMap，改用单一颜色，确保能显示！
             "series": [{
                 "name": '累计收益率',
                 "type": 'line',
                 "smooth": 0.2,
-                "showSymbol": True,  # 🔥 强制显示点
+                "showSymbol": True,
                 "symbolSize": 6,
-                "lineStyle": {"width": 3, "color": "#ea580c"},  # 使用醒目的橙红色
+                "lineStyle": {"width": 3, "color": "#ea580c"},
                 "itemStyle": {"color": "#ea580c"},
                 "markLine": {
                     "symbol": "none",
@@ -205,11 +215,10 @@ def render_history_chart(history_df, mode='value'):
                 },
                 "areaStyle": {
                     "opacity": 0.1,
-                    "color": "#ea580c"  # 单色背景
+                    "color": "#ea580c"
                 },
                 "data": yields
             }]
         }
 
-    # 渲染图表
     st_echarts(options=options, height="350px", key=f"chart_history_{mode}")
