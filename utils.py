@@ -2,6 +2,9 @@ import requests
 import yfinance as yf
 import streamlit as st
 import data_manager as db  # 引入数据库模块
+import sqlite3
+import os
+import pandas as pd
 
 
 # 1. 基础工具
@@ -141,6 +144,54 @@ def calculate_option_intrinsic_value(option_row, underlying_price):
 
 
 # 4. 估值核心逻辑
+def get_stock_price_from_db(symbol, asset_category='STOCK', option_info=None):
+    """从 stock_prices 表获取股票/期权现价
+    
+    Args:
+        symbol: 股票代码
+        asset_category: 资产类别 ('STOCK' 或 'OPTION')
+        option_info: 期权附加信息 (dict: expiration, option_type)
+    """
+    conn = sqlite3.connect(os.path.join(os.path.dirname(__file__), 'investments.db'))
+    cursor = conn.cursor()
+    
+    prices = {}
+    
+    # 1. 构建可能的查找键
+    search_keys = []
+    
+    if asset_category == 'OPTION' and option_info:
+        # 构建期权代码: "AMZN 2026-02-07 CALL"
+        expiration = option_info.get('expiration', '')
+        option_type = option_info.get('option_type', '')
+        if expiration and option_type:
+            option_code = f"{symbol} {expiration} {option_type}"
+            search_keys.append((option_code, 'OPTION'))
+    
+    # 添加原始股票代码
+    search_keys.append((symbol, asset_category))
+    
+    # 2. 逐一查找
+    for key, cat in search_keys:
+        cursor.execute('''
+            SELECT current_price, asset_category FROM stock_prices 
+            WHERE symbol = ?
+        ''', (key,))
+        row = cursor.fetchone()
+        if row:
+            prices[key] = row[0]
+    
+    conn.close()
+    
+    # 3. 返回结果
+    if asset_category == 'OPTION' and option_info:
+        # 优先返回期权价格
+        if search_keys[0][0] in prices:
+            return prices[search_keys[0][0]]
+    
+    return prices.get(symbol)
+
+
 def update_portfolio_valuation(df):
     rates = get_exchange_rates()
     current_prices = []
@@ -154,7 +205,24 @@ def update_portfolio_valuation(df):
         currencies.append(currency)
         rate = rates.get(currency, 1.0)
 
-        price = get_realtime_price(raw_sym)
+        # 准备期权信息
+        option_info = None
+        if row['Type'] == 'OPTION':
+            option_info = {
+                'expiration': str(row.get('expiration', '')) if pd.notna(row.get('expiration')) else '',
+                'option_type': row.get('option_type', '') if pd.notna(row.get('option_type')) else ''
+            }
+
+        # 1. 优先从 stock_prices 表获取价格
+        db_price = get_stock_price_from_db(raw_sym, row['Type'], option_info)
+        
+        # 2. 尝试实时抓取（仅用于 STOCK）
+        realtime_price = None
+        if row['Type'] == 'STOCK':
+            try:
+                realtime_price = get_realtime_price(raw_sym)
+            except:
+                pass
 
         # 这里会利用新的缓存逻辑
         sec = get_stock_sector(raw_sym) if row['Type'] == 'STOCK' else "📜 期权"
@@ -162,9 +230,16 @@ def update_portfolio_valuation(df):
 
         final_price_native = 0
         if row['Type'] == 'STOCK':
-            final_price_native = price if price else (row['Avg Cost'] or 0)
+            # STOCK: 优先实时抓取，其次用 stock_prices，最后用成本价
+            final_price_native = realtime_price if realtime_price else (db_price if db_price else (row['Avg Cost'] or 0))
         elif row['Type'] == 'OPTION':
-            final_price_native = calculate_option_intrinsic_value(row, price) if price else (row['Avg Cost'] or 0)
+            # OPTION: 优先从 stock_prices 获取手动设定的价格，其次计算内在价值
+            if db_price:
+                final_price_native = db_price
+            elif realtime_price:
+                final_price_native = calculate_option_intrinsic_value(row, realtime_price)
+            else:
+                final_price_native = row['Avg Cost'] or 0
 
         val_usd = final_price_native * row['Quantity'] * row['Multiplier'] * rate
         current_prices.append(final_price_native)
