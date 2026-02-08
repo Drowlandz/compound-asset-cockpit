@@ -292,32 +292,17 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
 
     with col_l:
         st.caption("资产分布透视")
-        chart_tab1, chart_tab2, chart_tab3 = st.tabs(["持仓", "赛道", "币种"])
-
         pie_data = portfolio_df.copy()
         if cash_balance > 0:
-            new_row = {'Symbol': 'CASH', 'Market Value': cash_balance, 'Sector': '💵 现金', 'Currency': 'USD'}
+            new_row = {'Symbol': 'CASH', 'Market Value': cash_balance}
             pie_data = pd.concat([pie_data, pd.DataFrame([new_row])], ignore_index=True)
 
         valid_pie = pie_data[pie_data['Market Value'] > 0.1]
 
-        with chart_tab1:
-            if not valid_pie.empty:
-                ui.render_echarts_pie(valid_pie, 'Symbol', 'Market Value', key="chart_holdings")
-            else:
-                st.info("无数据")
-        with chart_tab2:
-            if not valid_pie.empty:
-                sec_df = valid_pie.groupby('Sector')['Market Value'].sum().reset_index()
-                ui.render_echarts_pie(sec_df, 'Sector', 'Market Value', key="chart_sector")
-            else:
-                st.info("无数据")
-        with chart_tab3:
-            if not valid_pie.empty:
-                curr_df = valid_pie.groupby('Currency')['Market Value'].sum().reset_index()
-                ui.render_echarts_pie(curr_df, 'Currency', 'Market Value', key="chart_currency")
-            else:
-                st.info("无数据")
+        if not valid_pie.empty:
+            ui.render_echarts_pie(valid_pie, 'Symbol', 'Market Value', key="chart_holdings")
+        else:
+            st.info("无数据")
 
     with col_r:
         st.caption("持仓明细 (自动折算 USD)")
