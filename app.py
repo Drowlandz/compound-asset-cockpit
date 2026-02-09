@@ -277,10 +277,21 @@ with st.container():
     st.markdown('</div>', unsafe_allow_html=True)
 
 st.write("")
+
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("⚖️ 杠杆率", f"{lev_ratio:.2f}x", delta="安全" if lev_ratio <= 1.2 else "偏高",
           delta_color="inverse" if lev_ratio > 1.2 else "normal")
-c2.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%")
+
+# 集中度告警（类似杠杆率的做法）
+if top3_conc < 60:
+    c2.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%", delta="过低", delta_color="inverse")
+elif top3_conc < 70:
+    c2.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%", delta="偏低", delta_color="inverse")
+elif top3_conc < 80:
+    c2.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%", delta="接近阈值", delta_color="off")
+else:
+    c2.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%", delta="良好 ✓", delta_color="normal")
+
 c3.metric("🔫 现金/负债", f"${abs(cash_balance):,.0f}", f"{cash_ratio:+.1f}%")
 c4.metric("🛡️ 总利润 (Profit)", f"${pnl:,.0f}", help="净资产 - 总投入本金")
 
