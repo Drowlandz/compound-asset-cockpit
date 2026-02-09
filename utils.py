@@ -76,10 +76,32 @@ def get_global_macro_data():
             val = db.get_macro_cache(key)
         return val
 
+    def fetch_hsi_realized_vol_30d():
+        """
+        使用恒生指数 (^HSI) 计算 30 日历史波动率（年化，百分比）。
+        """
+        val = None
+        try:
+            hist = yf.Ticker("^HSI").history(period="90d")
+            if not hist.empty and 'Close' in hist.columns:
+                returns = hist['Close'].pct_change().dropna()
+                if len(returns) >= 30:
+                    window = returns.tail(30)
+                    # 年化波动率（%）
+                    val = float(window.std() * (252 ** 0.5) * 100)
+                    db.update_macro_cache("hsbfix", val)
+        except:
+            pass
+
+        if val is None:
+            val = db.get_macro_cache("hsbfix")
+        return val
+
     # 分别获取 (Yahoo Finance 比较慢，这种缓存策略非常关键)
     data['vix'] = fetch_and_cache("^VIX", "vix")
     data['tnx'] = fetch_and_cache("^TNX", "tnx")
-    data['vhsi'] = fetch_and_cache("^VHSI", "vhsi", period="5d")
+    # 恒指波幅：改为恒生指数 30 日历史波动率（年化）
+    data['hsbfix'] = fetch_hsi_realized_vol_30d()
     data['cnh'] = fetch_and_cache("CNH=X", "cnh", period="5d")
 
     return data
@@ -179,14 +201,15 @@ def get_stock_price_from_db(symbol, asset_category='STOCK', option_info=None):
         ''', (key,))
         row = cursor.fetchone()
         if row:
-            prices[key] = row[0]
+            # 允许 0 作为有效价格；仅在 NULL 时视为缺失
+            prices[key] = row[0] if row[0] is not None else None
     
     conn.close()
     
     # 3. 返回结果
     if asset_category == 'OPTION' and option_info:
         # 优先返回期权价格
-        if search_keys[0][0] in prices:
+        if search_keys[0][0] in prices and prices[search_keys[0][0]] is not None:
             return prices[search_keys[0][0]]
     
     return prices.get(symbol)
@@ -215,7 +238,7 @@ def update_portfolio_valuation(df):
 
         # 1. 优先从 stock_prices 表获取价格
         db_price = get_stock_price_from_db(raw_sym, row['Type'], option_info)
-        
+
         # 2. 尝试实时抓取（仅用于 STOCK）
         realtime_price = None
         if row['Type'] == 'STOCK':
@@ -231,15 +254,14 @@ def update_portfolio_valuation(df):
         final_price_native = 0
         if row['Type'] == 'STOCK':
             # STOCK: 优先实时抓取，其次用 stock_prices，最后用成本价
-            final_price_native = realtime_price if realtime_price else (db_price if db_price else (row['Avg Cost'] or 0))
+            final_price_native = (
+                realtime_price
+                if realtime_price is not None
+                else (db_price if db_price is not None else (row['Avg Cost'] or 0))
+            )
         elif row['Type'] == 'OPTION':
-            # OPTION: 优先从 stock_prices 获取手动设定的价格，其次计算内在价值
-            if db_price:
-                final_price_native = db_price
-            elif realtime_price:
-                final_price_native = calculate_option_intrinsic_value(row, realtime_price)
-            else:
-                final_price_native = row['Avg Cost'] or 0
+            # OPTION: 只使用手动设定价格；不抓取/不推算，避免 0 覆盖
+            final_price_native = db_price if db_price is not None else (row['Avg Cost'] or 0)
 
         val_usd = final_price_native * row['Quantity'] * row['Multiplier'] * rate
         current_prices.append(final_price_native)

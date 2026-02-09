@@ -74,6 +74,23 @@ def init_db():
         updated_at TEXT
     )''')
 
+    # 7. 现价缓存表 (确保主程序可用)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS stock_prices (
+            symbol TEXT PRIMARY KEY,
+            current_price REAL,
+            price_source TEXT,
+            updated_at TEXT,
+            asset_category TEXT
+        )
+    ''')
+
+    # 兼容旧表结构：补 asset_category 列
+    c.execute("PRAGMA table_info(stock_prices)")
+    columns = [col[1] for col in c.fetchall()]
+    if 'asset_category' not in columns:
+        c.execute('ALTER TABLE stock_prices ADD COLUMN asset_category TEXT')
+
     # 自动修复/迁移
     try:
         c.execute("SELECT total_invested FROM daily_snapshots LIMIT 1")
