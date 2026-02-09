@@ -1,5 +1,3 @@
-from operator import truediv
-
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
@@ -13,10 +11,34 @@ st.set_page_config(page_title="长期主义资产管理", layout="wide", page_ic
 db.init_db()
 st.markdown(cf.CUSTOM_CSS, unsafe_allow_html=True)
 
+if 'privacy_mode' not in st.session_state:
+    st.session_state['privacy_mode'] = False
+
+
+def is_privacy_mode():
+    return bool(st.session_state.get('privacy_mode', False))
+
+
+def fmt_money(value, decimals=0):
+    if is_privacy_mode():
+        return "****"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = 0.0
+    return f"${number:,.{decimals}f}"
+
+
+def money_col(label, fmt):
+    if is_privacy_mode():
+        return st.column_config.TextColumn(label)
+    return st.column_config.NumberColumn(label, format=fmt)
+
 
 # ================= 2. 弹窗逻辑 =================
 @st.dialog("📝 操作中心")
 def show_add_modal():
+    privacy_mode = is_privacy_mode()
     tab1, tab2, tab3, tab4 = st.tabs(["股票交易", "期权交易", "💰 本金管理", "♻️ 回收站"])
 
     # --- 股票 ---
@@ -97,8 +119,8 @@ def show_add_modal():
         curr_principal = db.get_total_invested()
         curr_cash = db.get_cash_balance()
 
-        st.metric("当前总本金 (Principal)", f"${curr_principal:,.0f}", help="你的总投入（计算利润的基准）")
-        st.metric("当前现金余额 (Cash)", f"${curr_cash:,.2f}", help="账户内可用现金")
+        st.metric("当前总本金 (Principal)", fmt_money(curr_principal, 0), help="你的总投入（计算利润的基准）")
+        st.metric("当前现金余额 (Cash)", fmt_money(curr_cash, 2), help="账户内可用现金")
         st.divider()
 
         mode = st.selectbox("操作类型", ["➕ 增加本金 (入金)", "➖ 减少本金 (出金)", "🔄 重置初始本金", "💸 单独校准现金"],
@@ -123,7 +145,8 @@ def show_add_modal():
             with st.form("reset_form"):
                 st.info("ℹ️ 此操作仅重置【计算利润的基准本金】，不会影响现金余额。")
                 f_date = st.date_input("重置日期", date.today())
-                f_amount = st.number_input("新本金总额", value=float(curr_principal), step=1000.0)
+                reset_default = 0.0 if privacy_mode else float(curr_principal)
+                f_amount = st.number_input("新本金总额", value=reset_default, step=1000.0)
                 if st.form_submit_button("🔥 确认重置本金", use_container_width=True):
                     db.reset_principal_only(f_amount, f_date)
                     st.cache_data.clear()
@@ -135,7 +158,8 @@ def show_add_modal():
         elif "校准现金" in mode:
             with st.form("fix_cash_form"):
                 st.info("ℹ️ 如果发现现金对不上，可在此直接修改。")
-                f_amount = st.number_input("实际现金余额", value=float(curr_cash), step=100.0)
+                cash_default = 0.0 if privacy_mode else float(curr_cash)
+                f_amount = st.number_input("实际现金余额", value=cash_default, step=100.0)
                 if st.form_submit_button("校准现金", use_container_width=True):
                     db.set_cash_balance(f_amount)
                     st.cache_data.clear()
@@ -149,12 +173,14 @@ def show_add_modal():
             display_f = funds.copy()
             display_f['display_type'] = display_f['type'].map(
                 {'DEPOSIT': '🟢 入金', 'WITHDRAW': '🔴 出金', 'RESET': '🔄 重置'})
+            if privacy_mode:
+                display_f['amount'] = "****"
             edited = st.data_editor(
                 display_f[['id', 'date', 'display_type', 'amount', 'note']],
                 column_config={
                     "id": None,
                     "display_type": "类型",
-                    "amount": st.column_config.NumberColumn("金额", format="$%.2f")
+                    "amount": money_col("金额", "$%.2f")
                 },
                 hide_index=True,
                 key="fund_editor",
@@ -192,9 +218,12 @@ st.subheader("🔭 长期主义驾驶舱")
 
 # --- 2. 宏观模块 ---
 macro_data = ut.get_global_macro_data()
-col_switch, _ = st.columns([1, 4])
+col_switch, col_privacy, _ = st.columns([1, 1, 3])
 with col_switch:
     market_mode = st.radio("Market View", ["US", "CN"], horizontal=True, label_visibility="collapsed")
+with col_privacy:
+    st.toggle("隐私模式", key="privacy_mode", help="开启后隐藏所有金额")
+privacy_mode = is_privacy_mode()
 
 mc1, mc2 = st.columns(2)
 if "US" in market_mode:
@@ -273,7 +302,7 @@ if market_val_usd > 0:
 with st.container():
     st.markdown('<div class="net-asset-card">', unsafe_allow_html=True)
     c_main = st.columns(1)[0]
-    c_main.metric("💎 净资产 (Net Assets USD)", f"${final_net_asset:,.0f}", f"{ret_pct:+.2f}%")
+    c_main.metric("💎 净资产 (Net Assets USD)", fmt_money(final_net_asset, 0), f"{ret_pct:+.2f}%")
     st.markdown('</div>', unsafe_allow_html=True)
 
 st.write("")
@@ -292,8 +321,8 @@ elif top3_conc < 80:
 else:
     c2.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%", delta="良好 ✓", delta_color="normal")
 
-c3.metric("🔫 现金/负债", f"${abs(cash_balance):,.0f}", f"{cash_ratio:+.1f}%")
-c4.metric("🛡️ 总利润 (Profit)", f"${pnl:,.0f}", help="净资产 - 总投入本金")
+c3.metric("🔫 现金/负债", fmt_money(abs(cash_balance), 0), f"{cash_ratio:+.1f}%")
+c4.metric("🛡️ 总利润 (Profit)", fmt_money(pnl, 0), help="净资产 - 总投入本金")
 
 st.divider()
 
@@ -311,7 +340,7 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
         valid_pie = pie_data[pie_data['Market Value'] > 0.1]
 
         if not valid_pie.empty:
-            ui.render_echarts_pie(valid_pie, 'Symbol', 'Market Value', key="chart_holdings")
+            ui.render_echarts_pie(valid_pie, 'Symbol', 'Market Value', key="chart_holdings", mask_value=privacy_mode)
         else:
             st.info("无数据")
 
@@ -327,18 +356,23 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
             lambda d: ut.get_badge_info(d)[0] + " " + ut.get_badge_info(d)[1])
 
         display_df = portfolio_df.sort_values('Market Value', ascending=False)
+        display_table = display_df.copy()
+        if privacy_mode:
+            for col in ['Avg Cost', 'Price', 'Market Value']:
+                if col in display_table.columns:
+                    display_table[col] = "****"
 
         st.dataframe(
-            display_df,
+            display_table,
             column_order=["Sector", "Symbol", "Quantity", "Avg Cost", "Price", "Market Value", "Safety Margin", "Badge",
                           "Days Held"],
             column_config={
                 "Sector": st.column_config.TextColumn("赛道", width="small"),
                 "Symbol": st.column_config.TextColumn("代码", width="small"),
                 "Quantity": st.column_config.NumberColumn("持仓", format="%.0f"),
-                "Avg Cost": st.column_config.NumberColumn("成本", format="%.2f"),
-                "Price": st.column_config.NumberColumn("现价", format="%.2f"),
-                "Market Value": st.column_config.NumberColumn("市值", format="$%.0f"),
+                "Avg Cost": money_col("成本", "%.2f"),
+                "Price": money_col("现价", "%.2f"),
+                "Market Value": money_col("市值", "$%.0f"),
                 "Safety Margin": st.column_config.ProgressColumn("安全边际", format="%.1f%%", min_value=0,
                                                                  max_value=100),
                 "Badge": st.column_config.TextColumn("荣誉", width="small"),
@@ -377,7 +411,7 @@ history_df = db.get_history_data()
 # st.dataframe(history_df, use_container_width=True)
 # # 🔥🔥🔥 【诊断探针】结束 🔥🔥🔥
 
-ui.render_history_chart(history_df, mode=mode_key)
+ui.render_history_chart(history_df, mode=mode_key, mask_value=privacy_mode)
 
 st.divider()
 
@@ -430,13 +464,19 @@ if not all_trans.empty:
     # --- A. 渲染持仓股流水 (分个股折叠) ---
     for sym in active_symbols:
         df_sym = all_trans[all_trans['symbol'] == sym].sort_values('date', ascending=False)
+        display_sym = df_sym.copy()
         count = len(df_sym)
         mv = active_holdings.get(sym, 0)
+        if privacy_mode:
+            display_sym['price'] = "****"
+            mv_label = "****"
+        else:
+            mv_label = f"${mv:,.0f}"
 
         # 标题显示市值
-        with st.expander(f"📦 {sym} (市值 ${mv:,.0f} · {count} 笔)"):
+        with st.expander(f"📦 {sym} (市值 {mv_label} · {count} 笔)"):
             edited = st.data_editor(
-                df_sym[['id', 'date', 'type', 'quantity', 'price', 'note']],
+                display_sym[['id', 'date', 'type', 'quantity', 'price', 'note']],
                 hide_index=True,
                 use_container_width=True,
                 key=f"editor_{sym}",
@@ -446,7 +486,7 @@ if not all_trans.empty:
                     "date": st.column_config.DateColumn("日期"),
                     "type": st.column_config.TextColumn("方向", width="small"),
                     "quantity": st.column_config.NumberColumn("数量"),
-                    "price": st.column_config.NumberColumn("价格", format="$%.2f"),
+                    "price": money_col("价格", "$%.2f"),
                     "note": st.column_config.TextColumn("备注")
                 }
             )
@@ -461,11 +501,14 @@ if not all_trans.empty:
     # --- B. 渲染非持仓/已清仓流水 (统一折叠) ---
     if inactive_symbols:
         df_inactive = all_trans[all_trans['symbol'].isin(inactive_symbols)].sort_values('date', ascending=False)
+        display_inactive = df_inactive.copy()
         count_inactive = len(df_inactive)
+        if privacy_mode:
+            display_inactive['price'] = "****"
 
         with st.expander(f"🗄️ 其他 / 已清仓 ({count_inactive} 笔交易)"):
             edited_inactive = st.data_editor(
-                df_inactive[['id', 'date', 'symbol', 'type', 'quantity', 'price', 'note']],
+                display_inactive[['id', 'date', 'symbol', 'type', 'quantity', 'price', 'note']],
                 hide_index=True,
                 use_container_width=True,
                 key="editor_inactive",
@@ -476,7 +519,7 @@ if not all_trans.empty:
                     "symbol": st.column_config.TextColumn("代码", width="small"),
                     "type": st.column_config.TextColumn("方向", width="small"),
                     "quantity": st.column_config.NumberColumn("数量"),
-                    "price": st.column_config.NumberColumn("价格", format="$%.2f"),
+                    "price": money_col("价格", "$%.2f"),
                     "note": st.column_config.TextColumn("备注")
                 }
             )
