@@ -120,6 +120,13 @@ CUSTOM_CSS = """
         border-left: 6px solid #059669;
     }
 
+    /* 持仓市值卡片 (清爽蓝渐变) */
+    div.holding-asset-card div[data-testid="stMetric"] {
+        background: linear-gradient(120deg, #ffffff 0%, #eff6ff 100%);
+        border: 1px solid #bfdbfe;
+        border-left: 6px solid #2563eb;
+    }
+
     /* 悬浮按钮 */
     div.stButton:has(button:active), div.stButton:last-of-type {
         position: fixed; bottom: 40px; right: 40px; z-index: 9999; width: auto;

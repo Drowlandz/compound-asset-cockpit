@@ -8,6 +8,7 @@ import utils as ut
 import ui
 from services import portfolio_service as pf_service
 from services.snapshot_service import save_today_snapshot
+from services import transaction_service as tx_service
 
 # ================= 1. 初始化 =================
 st.set_page_config(page_title="长期复利资产驾驶舱", layout="wide", page_icon="🔭")
@@ -89,19 +90,6 @@ def money_col(label, fmt):
     return st.column_config.NumberColumn(label, format=fmt)
 
 
-def parse_float_input(raw_text, field_label, min_value=None):
-    text = str(raw_text).strip().replace(",", "")
-    if text == "":
-        return None, f"{field_label} 不能为空"
-    try:
-        value = float(text)
-    except ValueError:
-        return None, f"{field_label} 请输入有效数字"
-    if min_value is not None and value < min_value:
-        return None, f"{field_label} 不能小于 {min_value:g}"
-    return value, None
-
-
 def invalidate_portfolio_cache():
     st.session_state.pop('portfolio_cache', None)
     st.session_state.pop('last_update', None)
@@ -168,9 +156,9 @@ def show_add_modal():
 
             if st.form_submit_button("提交交易", use_container_width=True, type="primary"):
                 final_type = "SELL" if is_sell else "BUY"
-                t_qty, err_qty = parse_float_input(t_qty_raw, "数量 (股)", min_value=0.01)
-                t_price, err_price = parse_float_input(t_price_raw, "成交单价", min_value=0.0)
-                t_fee, err_fee = parse_float_input(t_fee_raw, "佣金", min_value=0.0)
+                t_qty, err_qty = tx_service.parse_float_input(t_qty_raw, "数量 (股)", min_value=0.01)
+                t_price, err_price = tx_service.parse_float_input(t_price_raw, "成交单价", min_value=0.0)
+                t_fee, err_fee = tx_service.parse_float_input(t_fee_raw, "佣金", min_value=0.0)
                 errors = [err for err in [err_qty, err_price, err_fee] if err]
 
                 if errors:
@@ -180,8 +168,7 @@ def show_add_modal():
                 elif is_sell and t_qty > holding_qty:
                     st.error(f"卖出数量超过持仓")
                 else:
-                    db.add_transaction(t_date, t_sym, final_type, t_qty, t_price, t_fee, t_note, asset_category='STOCK',
-                                       multiplier=1)
+                    tx_service.add_stock_transaction(t_date, t_sym, final_type, t_qty, t_price, t_fee, t_note)
                     st.cache_data.clear()
                     invalidate_portfolio_cache()
                     st.success("已保存")
@@ -254,9 +241,9 @@ def show_add_modal():
             o_price_raw = c8.text_input("权利金", value="0")
             o_fee_raw = c9.text_input("佣金", value="0")
             if st.form_submit_button("提交期权交易", use_container_width=True, type="primary"):
-                o_qty, err_qty = parse_float_input(o_qty_raw, "张数", min_value=0.01)
-                o_price, err_price = parse_float_input(o_price_raw, "权利金", min_value=0.0)
-                o_fee, err_fee = parse_float_input(o_fee_raw, "佣金", min_value=0.0)
+                o_qty, err_qty = tx_service.parse_float_input(o_qty_raw, "张数", min_value=0.01)
+                o_price, err_price = tx_service.parse_float_input(o_price_raw, "权利金", min_value=0.0)
+                o_fee, err_fee = tx_service.parse_float_input(o_fee_raw, "佣金", min_value=0.0)
                 errors = [err for err in [err_qty, err_price, err_fee] if err]
 
                 if is_option_sell:
@@ -265,16 +252,24 @@ def show_add_modal():
                     elif o_qty > option_holding_qty:
                         errors.append("卖出张数超过可卖持仓")
                 else:
-                    o_strike, err_strike = parse_float_input(o_strike_raw, "行权价", min_value=0.0)
+                    o_strike, err_strike = tx_service.parse_float_input(o_strike_raw, "行权价", min_value=0.0)
                     if err_strike:
                         errors.append(err_strike)
 
                 if errors:
                     st.error("；".join(errors))
                 else:
-                    db.add_transaction(o_date, o_sym, o_side, o_qty, o_price, o_fee, f"Option {o_type} {o_strike}",
-                                       asset_category='OPTION', multiplier=100, strike=o_strike, expiration=str(o_exp),
-                                       option_type=o_type)
+                    tx_service.add_option_transaction(
+                        o_date,
+                        o_sym,
+                        o_side,
+                        o_qty,
+                        o_price,
+                        o_fee,
+                        o_type,
+                        o_strike,
+                        o_exp,
+                    )
                     st.cache_data.clear()
                     invalidate_portfolio_cache()
                     st.success("期权交易已保存")
@@ -317,22 +312,11 @@ def show_add_modal():
                 if existing_option_price is None:
                     st.warning("⚠️ 当前合约尚未设置价格，系统无法自动抓取实时期权价。")
                 if st.form_submit_button("保存期权当前价格", use_container_width=True, type="primary"):
-                    option_price, err_price = parse_float_input(option_price_raw, "当前价格（每股）", min_value=0.0)
+                    option_price, err_price = tx_service.parse_float_input(option_price_raw, "当前价格（每股）", min_value=0.0)
                     if err_price:
                         st.error(err_price)
                     else:
-                        option_symbol_key = db.build_option_price_symbol(
-                            selected['symbol'],
-                            selected['expiration'],
-                            selected['option_type'],
-                            selected.get('strike')
-                        )
-                        db.upsert_stock_price(
-                            option_symbol_key,
-                            option_price,
-                            source='manual',
-                            asset_category='OPTION'
-                        )
+                        option_symbol_key = tx_service.save_option_price(selected, option_price)
                         st.cache_data.clear()
                         invalidate_portfolio_cache()
                         st.success(f"已写入：{option_symbol_key} = ${option_price:.2f}")
@@ -361,12 +345,11 @@ def show_add_modal():
                 f_amount_raw = st.text_input("金额", value="0")
                 f_note = st.text_input("备注")
                 if st.form_submit_button("提交", use_container_width=True, type="primary"):
-                    f_amount, err_amount = parse_float_input(f_amount_raw, "金额", min_value=0.0)
+                    f_amount, err_amount = tx_service.parse_float_input(f_amount_raw, "金额", min_value=0.0)
                     if err_amount:
                         st.error(err_amount)
                     else:
-                        type_code = 'DEPOSIT' if mode == "➕ 入金" else 'WITHDRAW'
-                        db.manage_principal(f_date, type_code, f_amount, f_note)
+                        tx_service.apply_fund_flow(f_date, mode, f_amount, f_note)
                         st.cache_data.clear()
                         invalidate_portfolio_cache()
                         st.toast("✅ 资金已变动")
@@ -380,11 +363,11 @@ def show_add_modal():
                 reset_default = "0" if privacy_mode else f"{float(curr_principal):.2f}"
                 f_amount_raw = st.text_input("新本金总额", value=reset_default)
                 if st.form_submit_button("🔥 确认重置本金", use_container_width=True, type="primary"):
-                    f_amount, err_amount = parse_float_input(f_amount_raw, "新本金总额")
+                    f_amount, err_amount = tx_service.parse_float_input(f_amount_raw, "新本金总额")
                     if err_amount:
                         st.error(err_amount)
                     else:
-                        db.reset_principal_only(f_amount, f_date)
+                        tx_service.reset_principal(f_date, f_amount)
                         st.cache_data.clear()
                         invalidate_portfolio_cache()
                         st.toast("✅ 本金基准已重置")
@@ -397,11 +380,11 @@ def show_add_modal():
                 cash_default = "0" if privacy_mode else f"{float(curr_cash):.2f}"
                 f_amount_raw = st.text_input("实际现金余额", value=cash_default)
                 if st.form_submit_button("校准现金", use_container_width=True, type="primary"):
-                    f_amount, err_amount = parse_float_input(f_amount_raw, "实际现金余额")
+                    f_amount, err_amount = tx_service.parse_float_input(f_amount_raw, "实际现金余额")
                     if err_amount:
                         st.error(err_amount)
                     else:
-                        db.set_cash_balance(f_amount)
+                        tx_service.calibrate_cash(f_amount)
                         st.cache_data.clear()
                         st.toast("✅ 现金已校准")
                         st.rerun()
@@ -429,7 +412,7 @@ def show_add_modal():
             if st.session_state.get("fund_editor", {}).get("deleted_rows"):
                 for idx in st.session_state["fund_editor"]["deleted_rows"]:
                     record_id = int(funds.iloc[idx]['id'])
-                    db.delete_fund_flow(record_id)
+                    tx_service.delete_fund_flow(record_id)
                 st.rerun()
 
     # --- 回收站 ---
@@ -441,7 +424,7 @@ def show_add_modal():
                 c1, c2 = st.columns([4, 1])
                 c1.text(f"{row['symbol']} {row['type']} {row['quantity']}")
                 if c2.button("恢复", key=f"res_{row['id']}", type="secondary", use_container_width=True):
-                    db.restore_transaction(row['id'])
+                    tx_service.restore_transaction(int(row['id']))
                     st.cache_data.clear()
                     st.rerun()
         else:
@@ -516,7 +499,7 @@ def render_transaction_flow(privacy_mode, show_title=True):
                 )
                 if st.session_state.get(f"editor_{sym}", {}).get("deleted_rows"):
                     for idx in st.session_state[f"editor_{sym}"]["deleted_rows"]:
-                        db.soft_delete_transaction(int(df_sym.iloc[idx]['id']))
+                        tx_service.soft_delete_transaction(int(df_sym.iloc[idx]['id']))
                     st.cache_data.clear()
                     invalidate_portfolio_cache()
                     st.rerun()
@@ -547,7 +530,7 @@ def render_transaction_flow(privacy_mode, show_title=True):
                 )
                 if st.session_state.get("editor_inactive", {}).get("deleted_rows"):
                     for idx in st.session_state["editor_inactive"]["deleted_rows"]:
-                        db.soft_delete_transaction(int(df_inactive.iloc[idx]['id']))
+                        tx_service.soft_delete_transaction(int(df_inactive.iloc[idx]['id']))
                     st.cache_data.clear()
                     invalidate_portfolio_cache()
                     st.rerun()
@@ -725,17 +708,20 @@ save_today_snapshot(final_net_asset, base)
 
 # 核心指标看板
 with st.container():
-    st.markdown('<div class="net-asset-card">', unsafe_allow_html=True)
-    c_main = st.columns(1)[0]
-    c_main.metric("💎 净资产 (Net Assets USD)", fmt_money(final_net_asset, 0), f"{ret_pct:+.2f}%")
-    if is_privacy_mode():
-        c_main.caption("持仓市值: **** | 持仓占净资产: ****")
-    else:
-        if abs(final_net_asset) > 1e-9:
-            c_main.caption(f"持仓市值: {fmt_money(market_val_usd, 0)} | 持仓占净资产: {holding_ratio_pct:.1f}%")
+    c_net, c_hold = st.columns([1.25, 1.0])
+    with c_net:
+        st.markdown('<div class="net-asset-card">', unsafe_allow_html=True)
+        st.metric("💎 净资产 (Net Assets USD)", fmt_money(final_net_asset, 0), f"{ret_pct:+.2f}%")
+        st.markdown('</div>', unsafe_allow_html=True)
+    with c_hold:
+        st.markdown('<div class="holding-asset-card">', unsafe_allow_html=True)
+        if is_privacy_mode():
+            hold_delta = "占净资产 ****"
         else:
-            c_main.caption(f"持仓市值: {fmt_money(market_val_usd, 0)} | 持仓占净资产: N/A")
-    st.markdown('</div>', unsafe_allow_html=True)
+            ratio_text = f"{holding_ratio_pct:.1f}%" if abs(final_net_asset) > 1e-9 else "N/A"
+            hold_delta = f"占净资产 {ratio_text}"
+        st.metric("📦 持仓市值 (USD)", fmt_money(market_val_usd, 0), hold_delta, delta_color="off")
+        st.markdown('</div>', unsafe_allow_html=True)
 
 st.write("")
 
@@ -962,16 +948,17 @@ ui.render_history_chart(history_df, mode=mode_key, mask_value=privacy_mode)
 st.divider()
 
 # --- 6. 收益日历 ---
-st.subheader("🗓️ 收益日历 (USD)")
-cal_l, cal_c, cal_r = st.columns([1, 2.6, 1])
-with cal_c:
+st.subheader("🗓️ 收益日历")
+if st.session_state.get("pnl_calendar_view") not in [None, "月", "年"]:
+    st.session_state["pnl_calendar_view"] = "月"
+if "pnl_calendar_metric" not in st.session_state:
+    st.session_state["pnl_calendar_metric"] = "%"
+elif st.session_state.get("pnl_calendar_metric") not in ["$", "%"]:
+    st.session_state["pnl_calendar_metric"] = "%"
+
+cal_left, cal_right = st.columns([1.0, 2.6], gap="medium")
+with cal_right:
     cal_c1, cal_c2, cal_c3, cal_c4 = st.columns([1.2, 1.2, 1.0, 1.0])
-    if st.session_state.get("pnl_calendar_view") not in [None, "月", "年"]:
-        st.session_state["pnl_calendar_view"] = "月"
-    if "pnl_calendar_metric" not in st.session_state:
-        st.session_state["pnl_calendar_metric"] = "%"
-    elif st.session_state.get("pnl_calendar_metric") not in ["$", "%"]:
-        st.session_state["pnl_calendar_metric"] = "%"
     with cal_c1:
         cal_view = st.radio(
             "日历视图",
@@ -1021,6 +1008,82 @@ with cal_c:
         month=selected_month if cal_view == "月" else None,
         mask_value=privacy_mode
     )
+
+with cal_left:
+    period_stats = ui.get_pnl_period_stats(history_df)
+    anchor_date = period_stats["anchor_date"]
+    # 与右侧筛选控件行做高度对齐，卡片从日历主体同一水平线开始
+    st.markdown('<div style="height:46px;"></div>', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <style>
+        .pnl-side-card {
+            width: 100%;
+            margin-bottom: 6px;
+            border-radius: 10px;
+            padding: 8px 10px;
+            min-height: 64px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            transition: transform 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease;
+        }
+        .pnl-side-card:hover {
+            transform: translateY(-2px) scale(1.01);
+            box-shadow: 0 10px 20px rgba(15, 23, 42, 0.16);
+            filter: saturate(1.04);
+        }
+        .pnl-side-title {
+            font-size: 11px;
+            color: #334155;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+        .pnl-side-value {
+            margin-top: 5px;
+            font-size: 17px;
+            font-weight: 400;
+            line-height: 1.1;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    def _period_card_style(val):
+        if val > 0:
+            return ("linear-gradient(135deg, #ecfdf5 0%, #bbf7d0 100%)", "#22c55e", "#166534")
+        if val < 0:
+            return ("linear-gradient(135deg, #fef2f2 0%, #fecaca 100%)", "#ef4444", "#991b1b")
+        return ("linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)", "#94a3b8", "#334155")
+
+    def _period_text(val, metric_mode):
+        if metric_mode == "$":
+            if privacy_mode:
+                return "****"
+            return f"${val:+,.0f}"
+        return f"{val:+.2f}%"
+
+    card_items = [
+        ("本周收益", period_stats["week"]),
+        ("本月收益", period_stats["month"]),
+        ("今年收益", period_stats["year"]),
+    ]
+
+    for title, data in card_items:
+        card_val = data["amount"] if cal_metric == "$" else data["rate"]
+        bg, border, text_color = _period_card_style(card_val)
+        value_text = _period_text(card_val, cal_metric)
+        st.markdown(
+            f"""
+            <div class="pnl-side-card" style="border:1px solid {border}; background:{bg};">
+                <div class="pnl-side-title">{title}</div>
+                <div class="pnl-side-value" style="color:{text_color};">{value_text}</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    st.caption(f"统计截止：{anchor_date:%Y-%m-%d}")
 
 # 底部悬浮按钮
 st.markdown('<span id="fab-anchor"></span>', unsafe_allow_html=True)

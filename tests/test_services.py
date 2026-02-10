@@ -3,6 +3,7 @@ import unittest
 import pandas as pd
 
 from services import portfolio_service as pf_service
+from services import transaction_service as tx_service
 from services.risk_rules import concentration_band
 from services.risk_rules import leverage_band
 from services.risk_rules import sector_concentration_band
@@ -61,6 +62,27 @@ class TestPortfolioService(unittest.TestCase):
         self.assertAlmostEqual(metrics["top3_conc"], 100.0)
 
 
+class TestTransactionService(unittest.TestCase):
+    def test_parse_float_input_ok(self):
+        value, err = tx_service.parse_float_input("1,234.50", "金额", min_value=0.0)
+        self.assertIsNone(err)
+        self.assertAlmostEqual(value, 1234.5)
+
+    def test_parse_float_input_empty(self):
+        value, err = tx_service.parse_float_input("", "金额", min_value=0.0)
+        self.assertIsNone(value)
+        self.assertIn("不能为空", err)
+
+    def test_parse_float_input_invalid(self):
+        value, err = tx_service.parse_float_input("abc", "金额", min_value=0.0)
+        self.assertIsNone(value)
+        self.assertIn("有效数字", err)
+
+    def test_parse_float_input_below_min(self):
+        value, err = tx_service.parse_float_input("-1", "金额", min_value=0.0)
+        self.assertIsNone(value)
+        self.assertIn("不能小于", err)
+
+
 if __name__ == "__main__":
     unittest.main()
-

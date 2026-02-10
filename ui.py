@@ -307,6 +307,49 @@ def _prepare_daily_pnl(history_df):
     return df[['day_key', 'daily_amount', 'daily_rate', 'date']]
 
 
+def get_pnl_period_stats(history_df):
+    """
+    返回截至最新快照日的本周/本月/今年收益统计。
+    返回结构:
+    {
+        "anchor_date": datetime.date,
+        "week": {"amount": float, "rate": float},
+        "month": {"amount": float, "rate": float},
+        "year": {"amount": float, "rate": float},
+    }
+    """
+    daily_df = _prepare_daily_pnl(history_df)
+    if daily_df.empty:
+        today = datetime.now().date()
+        return {
+            "anchor_date": today,
+            "week": {"amount": 0.0, "rate": 0.0},
+            "month": {"amount": 0.0, "rate": 0.0},
+            "year": {"amount": 0.0, "rate": 0.0},
+        }
+
+    latest_ts = pd.to_datetime(daily_df["date"]).max()
+    anchor = latest_ts.date()
+    week_start = (latest_ts - timedelta(days=latest_ts.weekday())).normalize()
+    month_start = latest_ts.replace(day=1).normalize()
+    year_start = latest_ts.replace(month=1, day=1).normalize()
+
+    def calc(start_ts):
+        scoped = daily_df[(daily_df["date"] >= start_ts) & (daily_df["date"] <= latest_ts)]
+        if scoped.empty:
+            return {"amount": 0.0, "rate": 0.0}
+        amount = float(scoped["daily_amount"].sum())
+        rate = float(((1 + (scoped["daily_rate"] / 100.0)).prod() - 1) * 100.0)
+        return {"amount": amount, "rate": rate}
+
+    return {
+        "anchor_date": anchor,
+        "week": calc(week_start),
+        "month": calc(month_start),
+        "year": calc(year_start),
+    }
+
+
 def _prepare_monthly_pnl(daily_df):
     if daily_df is None or daily_df.empty:
         return pd.DataFrame({
@@ -361,6 +404,33 @@ def _cell_bg(value, max_abs):
     return "rgba(148, 163, 184, 0.10)"
 
 
+def _render_calendar_hover_css():
+    st.markdown(
+        """
+        <style>
+        .pnl-calendar-host .pnl-tile {
+            transition: transform 0.16s ease, box-shadow 0.16s ease;
+            transform-origin: center;
+            will-change: transform;
+            position: relative;
+            z-index: 0;
+        }
+        .pnl-calendar-host .pnl-tile:hover {
+            transform: scale(1.06);
+            box-shadow: 0 10px 20px rgba(15, 23, 42, 0.18);
+            z-index: 5;
+        }
+        .pnl-calendar-host .pnl-tile-no-data:hover {
+            transform: none;
+            box-shadow: none;
+            z-index: 0;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_month(year, month, daily_map, metric_mode, max_abs, mask_value=False):
     month_name = f"{year}-{month:02d}"
     cal = calendar.Calendar(firstweekday=0)
@@ -368,7 +438,7 @@ def _render_month(year, month, daily_map, metric_mode, max_abs, mask_value=False
     today_date = datetime.now().date()
 
     html_parts = [
-        '<div style="width:100%;margin:0 0 12px 0;border:1px solid #e2e8f0;'
+        '<div class="pnl-calendar-host" style="width:100%;margin:0 0 12px 0;border:1px solid #e2e8f0;'
         'border-radius:10px;padding:10px;background:#ffffff;">'
     ]
     html_parts.append(
@@ -386,7 +456,7 @@ def _render_month(year, month, daily_map, metric_mode, max_abs, mask_value=False
         for day_obj in week:
             if day_obj.month != month:
                 html_parts.append(
-                    '<div style="min-height:68px;border:1px solid #e2e8f0;border-radius:14px;'
+                    '<div class="pnl-tile pnl-tile-no-data" style="min-height:68px;border:1px solid #e2e8f0;border-radius:14px;'
                     'background:#f8fafc;"></div>'
                 )
                 continue
@@ -396,14 +466,16 @@ def _render_month(year, month, daily_map, metric_mode, max_abs, mask_value=False
             if item is None:
                 value = 0.0
                 display_val = "--" if day_obj <= today_date else ""
+                tile_cls = "pnl-tile pnl-tile-no-data"
             else:
                 value = item['daily_amount'] if metric_mode == 'amount' else item['daily_rate']
                 display_val = _fmt_amount(value, mask_value) if metric_mode == 'amount' else _fmt_rate(value)
+                tile_cls = "pnl-tile"
 
             bg = _cell_bg(value, max_abs)
             value_color = _value_color(value)
             html_parts.append(
-                f'<div style="min-height:68px;border:1px solid #e2e8f0;border-radius:14px;'
+                f'<div class="{tile_cls}" style="min-height:68px;border:1px solid #e2e8f0;border-radius:14px;'
                 f'padding:8px 6px;background:{bg};display:flex;flex-direction:column;'
                 'align-items:center;justify-content:center;gap:8px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.35);">'
                 f'<div style="font-size:15px;font-weight:800;color:#1e293b;line-height:1;text-align:center;">{day_obj.day:02d}</div>'
@@ -422,7 +494,7 @@ def _render_week(week_start, daily_map, metric_mode, max_abs, mask_value=False):
     today_date = datetime.now().date()
 
     html_parts = [
-        '<div style="width:100%;margin:0 0 12px 0;border:1px solid #e2e8f0;'
+        '<div class="pnl-calendar-host" style="width:100%;margin:0 0 12px 0;border:1px solid #e2e8f0;'
         'border-radius:10px;padding:10px;background:#ffffff;">'
     ]
     html_parts.append(
@@ -444,14 +516,16 @@ def _render_week(week_start, daily_map, metric_mode, max_abs, mask_value=False):
         if item is None:
             value = 0.0
             display_val = "--" if day_obj.date() <= today_date else ""
+            tile_cls = "pnl-tile pnl-tile-no-data"
         else:
             value = item['daily_amount'] if metric_mode == 'amount' else item['daily_rate']
             display_val = _fmt_amount(value, mask_value) if metric_mode == 'amount' else _fmt_rate(value)
+            tile_cls = "pnl-tile"
 
         bg = _cell_bg(value, max_abs)
         value_color = _value_color(value)
         html_parts.append(
-            f'<div style="min-height:56px;border:1px solid #e2e8f0;border-radius:12px;'
+            f'<div class="{tile_cls}" style="min-height:56px;border:1px solid #e2e8f0;border-radius:12px;'
             f'padding:6px 4px;background:{bg};display:flex;flex-direction:column;'
             'align-items:center;justify-content:center;gap:6px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.35);">'
             f'<div style="font-size:13px;font-weight:800;color:#1e293b;line-height:1;text-align:center;">{day_obj.day:02d}</div>'
@@ -463,7 +537,8 @@ def _render_week(week_start, daily_map, metric_mode, max_abs, mask_value=False):
     st.markdown("".join(html_parts), unsafe_allow_html=True)
 
 
-def _render_year_cards(year, monthly_df, metric_mode, mask_value=False):
+def _render_year_cards(year, monthly_df, metric_mode, months_with_data=None, mask_value=False):
+    months_with_data = set(months_with_data or [])
     monthly_map = {}
     for _, row in monthly_df.iterrows():
         monthly_map[int(row['month'])] = {
@@ -476,7 +551,7 @@ def _render_year_cards(year, monthly_df, metric_mode, mask_value=False):
     max_abs = float(max(abs(v) for v in values)) if values else 0.0
 
     html_parts = [
-        '<div style="width:100%;margin:0 0 12px 0;">'
+        '<div class="pnl-calendar-host" style="width:100%;margin:0 0 12px 0;">'
         '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;">'
     ]
 
@@ -486,8 +561,9 @@ def _render_year_cards(year, monthly_df, metric_mode, mask_value=False):
         display_val = _fmt_amount(value, mask_value) if metric_mode == 'amount' else _fmt_rate(value)
         bg = _cell_bg(value, max_abs)
         value_color = _value_color(value)
+        tile_cls = "pnl-tile" if month in months_with_data else "pnl-tile pnl-tile-no-data"
         html_parts.append(
-            f'<div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px 14px;'
+            f'<div class="{tile_cls}" style="border:1px solid #e2e8f0;border-radius:12px;padding:14px 14px;'
             f'background:{bg};">'
             f'<div style="font-size:13px;color:#334155;margin-bottom:8px;">{year}-{month:02d}</div>'
             f'<div style="font-size:16px;font-weight:400;color:{value_color};">{display_val}</div>'
@@ -508,6 +584,7 @@ def render_pnl_calendar(history_df, view_mode='month', metric_mode='amount', yea
     if daily_df.empty:
         st.info("暂无快照数据，收益日历暂不可用。")
         return
+    _render_calendar_hover_css()
 
     daily_map = {
         row['day_key']: {'daily_amount': float(row['daily_amount']), 'daily_rate': float(row['daily_rate'])}
@@ -547,4 +624,5 @@ def render_pnl_calendar(history_df, view_mode='month', metric_mode='amount', yea
         return
 
     monthly_df = _prepare_monthly_pnl(year_df)
-    _render_year_cards(year, monthly_df, metric_mode, mask_value=mask_value)
+    months_with_data = year_df['date'].dt.month.astype(int).unique().tolist()
+    _render_year_cards(year, monthly_df, metric_mode, months_with_data=months_with_data, mask_value=mask_value)
