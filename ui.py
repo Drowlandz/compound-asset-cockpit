@@ -6,7 +6,7 @@ import calendar
 from datetime import datetime, timedelta
 
 # 🔥 ECharts 3D 饼图 (支持隐私脱敏 mask_value)
-def render_echarts_pie(df, name_col, value_col, title_text="", key=None, mask_value=False):
+def render_echarts_pie(df, name_col, value_col, title_text="", key=None, mask_value=False, color_palette=None):
     """
     增加了 mask_value 参数以兼容 app.py 的调用。
     当前配置下 tooltip 已关闭，且标签只显示名称和百分比，本身已具备隐私性。
@@ -71,6 +71,9 @@ def render_echarts_pie(df, name_col, value_col, title_text="", key=None, mask_va
             "data": data_list
         }]
     }
+
+    if color_palette:
+        options["color"] = color_palette
 
     st_echarts(options=options, height="280px", key=key)
 

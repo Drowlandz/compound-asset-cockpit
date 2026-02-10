@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
+import html
 import data_manager as db
 import config as cf
 import utils as ut
@@ -678,15 +679,54 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
 
     with col_l:
         st.caption("资产分布透视")
-        pie_data = portfolio_df.copy()
-        if cash_balance > 0:
-            new_row = {'Symbol': 'CASH', 'Market Value': cash_balance}
-            pie_data = pd.concat([pie_data, pd.DataFrame([new_row])], ignore_index=True)
+        perspective_mode = st.radio(
+            "透视视图",
+            ["持仓", "赛道"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="asset_perspective_mode"
+        )
+
+        pie_data = pd.DataFrame()
+        name_col = "Symbol"
+        pie_palette = None
+        if perspective_mode == "持仓":
+            # 持仓恢复默认配色
+            pie_data = portfolio_df.copy()
+            if cash_balance > 0:
+                new_row = {'Symbol': 'CASH', 'Market Value': cash_balance}
+                pie_data = pd.concat([pie_data, pd.DataFrame([new_row])], ignore_index=True)
+            name_col = "Symbol"
+        else:
+            # 赛道使用中饱和离散配色（保留区分度，降低刺眼感）
+            pie_palette = [
+                "#D95D83", "#4FA8C8", "#D7B55B", "#7C6CB0", "#4FAFA4",
+                "#D07A4F", "#8F6FC3", "#5C8FD8", "#4FAF8F", "#D86D8C",
+                "#4D8FA8", "#D8B86A", "#89AF5A", "#B85D5D", "#7A6A96",
+                "#58A0B8", "#C66FA6", "#D39A6D", "#5E9F8E", "#6F8193"
+            ]
+            sector_df = portfolio_df.copy()
+            if 'Sector' not in sector_df.columns:
+                sector_df['Sector'] = 'N/A'
+            sector_df['Sector'] = sector_df['Sector'].fillna('N/A')
+            pie_data = sector_df.groupby('Sector', as_index=False)['Market Value'].sum()
+            pie_data.rename(columns={'Sector': 'Category'}, inplace=True)
+            if cash_balance > 0:
+                cash_row = pd.DataFrame([{'Category': '💵 现金', 'Market Value': cash_balance}])
+                pie_data = pd.concat([pie_data, cash_row], ignore_index=True)
+            name_col = "Category"
 
         valid_pie = pie_data[pie_data['Market Value'] > 0.1]
 
         if not valid_pie.empty:
-            ui.render_echarts_pie(valid_pie, 'Symbol', 'Market Value', key="chart_holdings", mask_value=privacy_mode)
+            ui.render_echarts_pie(
+                valid_pie,
+                name_col,
+                'Market Value',
+                key=f"chart_distribution_{perspective_mode}",
+                mask_value=privacy_mode,
+                color_palette=pie_palette
+            )
         else:
             st.info("无数据")
 
@@ -708,23 +748,98 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
                 if col in display_table.columns:
                     display_table[col] = "****"
 
-        st.dataframe(
-            display_table,
-            column_order=["Sector", "Symbol", "Quantity", "Avg Cost", "Price", "Market Value", "Safety Margin", "Badge",
-                          "Days Held"],
-            column_config={
-                "Sector": st.column_config.TextColumn("赛道", width="small"),
-                "Symbol": st.column_config.TextColumn("代码", width="small"),
-                "Quantity": st.column_config.NumberColumn("持仓", format="%.0f"),
-                "Avg Cost": money_col("成本", "%.2f"),
-                "Price": money_col("现价", "%.2f"),
-                "Market Value": money_col("市值", "$%.0f"),
-                "Safety Margin": st.column_config.ProgressColumn("安全边际", format="%.1f%%", min_value=0,
-                                                                 max_value=100),
-                "Badge": st.column_config.TextColumn("荣誉", width="small"),
-                "Days Held": st.column_config.NumberColumn("天数", format="%d")
-            },
-            use_container_width=True, height=450, hide_index=True
+        display_table = display_table[
+            ["Sector", "Symbol", "Quantity", "Avg Cost", "Price", "Market Value", "Safety Margin", "Badge", "Days Held"]
+        ].copy()
+
+        def fmt_int(value):
+            try:
+                return f"{float(value):.0f}"
+            except (TypeError, ValueError):
+                return ""
+
+        def fmt_money_or_masked(value, decimals):
+            if isinstance(value, str):
+                return value
+            try:
+                return f"${float(value):,.{decimals}f}"
+            except (TypeError, ValueError):
+                return ""
+
+        table_rows = []
+        for _, row in display_table.iterrows():
+            safety = row.get("Safety Margin", 0)
+            try:
+                safety_float = float(safety)
+            except (TypeError, ValueError):
+                safety_float = 0.0
+            bar_width = max(0.0, min(abs(safety_float), 100.0))
+            sign_cls = "sm-pos" if safety_float > 0 else "sm-neg" if safety_float < 0 else "sm-zero"
+            safety_label = f"{safety_float:+.1f}%"
+
+            table_rows.append(
+                "<tr>"
+                f"<td>{html.escape(str(row.get('Sector', '')))}</td>"
+                f"<td>{html.escape(str(row.get('Symbol', '')))}</td>"
+                f"<td>{fmt_int(row.get('Quantity', ''))}</td>"
+                f"<td>{fmt_money_or_masked(row.get('Avg Cost', ''), 2)}</td>"
+                f"<td>{fmt_money_or_masked(row.get('Price', ''), 2)}</td>"
+                f"<td>{fmt_money_or_masked(row.get('Market Value', ''), 0)}</td>"
+                "<td>"
+                "<div class='sm-wrap'>"
+                "<div class='sm-track'>"
+                f"<div class='sm-fill {sign_cls}' style='width:{bar_width:.1f}%;'></div>"
+                "</div>"
+                f"<span class='sm-label {sign_cls}'>{safety_label}</span>"
+                "</div>"
+                "</td>"
+                f"<td>{html.escape(str(row.get('Badge', '')))}</td>"
+                f"<td>{fmt_int(row.get('Days Held', ''))}</td>"
+                "</tr>"
+            )
+
+        st.markdown(
+            """
+            <style>
+            .holdings-wrap { max-height: 450px; overflow: auto; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff; }
+            .holdings-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+            .holdings-table thead th {
+                position: sticky; top: 0; z-index: 1;
+                background: #f8fafc; color: #334155; font-weight: 700;
+                text-align: left; padding: 10px 10px; border-bottom: 1px solid #e2e8f0;
+            }
+            .holdings-table tbody td {
+                padding: 9px 10px; border-bottom: 1px solid #f1f5f9; color: #0f172a; white-space: nowrap;
+            }
+            .holdings-table tbody tr:hover { background: #f8fafc; }
+            .holdings-table th:nth-child(7), .holdings-table td:nth-child(7) { width: 220px; }
+            .sm-wrap { display: flex; align-items: center; gap: 8px; width: 100%; }
+            .sm-track {
+                flex: 1 1 auto; min-width: 120px; height: 8px; border-radius: 999px; overflow: hidden;
+                background: #e2e8f0; border: 1px solid #cbd5e1;
+            }
+            .sm-fill { height: 100%; border-radius: 999px; }
+            .sm-fill.sm-pos { background: linear-gradient(90deg, #22c55e, #16a34a); }
+            .sm-fill.sm-neg { background: linear-gradient(90deg, #f87171, #dc2626); }
+            .sm-fill.sm-zero { background: #94a3b8; }
+            .sm-label { font-weight: 400; font-size: 13px; min-width: 56px; text-align: right; }
+            .sm-label.sm-pos { color: #16a34a; }
+            .sm-label.sm-neg { color: #dc2626; }
+            .sm-label.sm-zero { color: #64748b; }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+        st.markdown(
+            "<div class='holdings-wrap'>"
+            "<table class='holdings-table'>"
+            "<thead><tr>"
+            "<th>赛道</th><th>代码</th><th>持仓</th><th>成本</th><th>现价</th><th>市值</th><th>安全边际</th><th>荣誉</th><th>天数</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(table_rows)}</tbody>"
+            "</table>"
+            "</div>",
+            unsafe_allow_html=True
         )
 
 st.divider()
