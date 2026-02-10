@@ -133,10 +133,130 @@ CUSTOM_CSS = """
     }
     div.stButton:last-of-type > button:hover { transform: scale(1.15) rotate(90deg); box-shadow: 0 15px 35px rgba(220, 38, 38, 0.5); }
 
-    /* 修正弹窗按钮 */
+    /* 操作中心弹窗（克制风格） */
+    div[data-testid="stDialog"] div[role="dialog"] {
+        max-width: 920px !important;
+        width: min(920px, 94vw) !important;
+        border-radius: 16px !important;
+        border: 1px solid #e2e8f0 !important;
+        background: #ffffff !important;
+        box-shadow: 0 20px 45px -18px rgba(15, 23, 42, 0.35) !important;
+    }
     div[data-testid="stDialog"] div.stButton { position: static !important; width: auto !important; }
-    div[data-testid="stDialog"] button { border-radius: 6px !important; width: auto !important; height: auto !important; font-size: 1rem !important; background: #f1f5f9; color: #0f172a; border: 1px solid #cbd5e1; box-shadow: none; }
-    div[data-testid="stDialog"] button:hover { background: #e2e8f0; }
+    div[data-testid="stDialog"] [data-baseweb="tab-list"] {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 14px;
+        padding: 8px;
+        gap: 12px;
+        margin-bottom: 12px;
+    }
+    div[data-testid="stDialog"] button[role="tab"] {
+        height: 38px;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 10px;
+        background: #f8fafc !important;
+        color: #64748b !important;
+        font-weight: 600;
+        font-size: 13px;
+        padding: 0 14px;
+        transition: all 0.15s ease;
+    }
+    div[data-testid="stDialog"] button[role="tab"]:hover {
+        background: #eef2ff !important;
+        border-color: #cbd5e1 !important;
+        color: #334155 !important;
+    }
+    div[data-testid="stDialog"] button[role="tab"][aria-selected="true"] {
+        background: #dbeafe !important;
+        border-color: #93c5fd !important;
+        color: #1e3a8a !important;
+        box-shadow: 0 2px 8px rgba(59, 130, 246, 0.15);
+    }
+    /* 覆盖全局 radio，给弹窗里的分段选择更紧凑的样式 */
+    div[data-testid="stDialog"] div[data-testid="stRadio"] > div[role="radiogroup"] {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 3px;
+        gap: 2px;
+    }
+    div[data-testid="stDialog"] div[data-testid="stRadio"] label[data-baseweb="radio"] {
+        padding: 5px 12px !important;
+        border-radius: 8px;
+    }
+    div[data-testid="stDialog"] div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) {
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+    }
+    div[data-testid="stDialog"] div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) > div {
+        color: #0f172a !important;
+        font-weight: 700;
+    }
+    div[data-testid="stDialog"] [data-baseweb="input"] {
+        border-radius: 10px;
+        border: 1px solid #cbd5e1;
+        background: #fff;
+        transition: all 0.15s ease;
+    }
+    div[data-testid="stDialog"] [data-baseweb="input"]:focus-within {
+        border-color: #2563eb;
+        box-shadow: 0 0 0 3px #dbeafe;
+    }
+    div[data-testid="stDialog"] [data-baseweb="select"] > div {
+        border-radius: 10px;
+        border: 1px solid #cbd5e1;
+        min-height: 40px;
+    }
+    /* 弹窗内多列字段间距收紧，避免空白断裂 */
+    div[data-testid="stDialog"] div[data-testid="stHorizontalBlock"] {
+        gap: 0.75rem;
+    }
+    div[data-testid="stDialog"] div.stButton > button {
+        width: auto !important;
+        min-height: 36px !important;
+        height: 36px !important;
+        border-radius: 9px !important;
+        border: 1px solid #cbd5e1 !important;
+        background: #f8fafc !important;
+        color: #0f172a !important;
+        font-weight: 700;
+        padding: 0 12px !important;
+        box-shadow: none !important;
+        transform: none !important;
+        transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease !important;
+    }
+    div[data-testid="stDialog"] div.stButton > button:hover {
+        border-color: #94a3b8 !important;
+        background: #f1f5f9 !important;
+        transform: none !important;
+        box-shadow: none !important;
+    }
+    div[data-testid="stDialog"] div.stButton > button[data-testid="baseButton-primary"] {
+        border: 1px solid #1d4ed8 !important;
+        background: #2563eb !important;
+        color: #ffffff !important;
+    }
+    div[data-testid="stDialog"] div.stButton > button[data-testid="baseButton-primary"]:hover {
+        background: #1d4ed8 !important;
+        border-color: #1e40af !important;
+    }
+    div[data-testid="stDialog"] div.stButton > button[data-testid="baseButton-secondary"] {
+        border: 1px solid #86efac !important;
+        background: #ecfdf5 !important;
+        color: #166534 !important;
+    }
+    div[data-testid="stDialog"] div.stButton > button[data-testid="baseButton-secondary"]:hover {
+        border-color: #4ade80 !important;
+        background: #dcfce7 !important;
+        color: #14532d !important;
+    }
+    @media (max-width: 768px) {
+        div[data-testid="stDialog"] div[role="dialog"] {
+            width: 96vw !important;
+        }
+    }
 </style>
 """
 
