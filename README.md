@@ -79,6 +79,9 @@ streamlit run app.py
 
 # 方式二：使用启动脚本
 python run_app.py
+
+# 方式三：使用启动脚本（关闭页面后自动空闲关停，默认120秒）
+python run_app.py --idle-seconds 120
 ```
 
 ### 3. 访问浏览器
@@ -97,11 +100,12 @@ IM/
 ├── run_app.py          # 启动脚本
 ├── requirements.txt    # 项目依赖
 ├── investments.db      # SQLite 数据库（运行时生成）
-├── README.md          # 本文档
-└── tools/             # 实用工具脚本
-    ├── update_price.py    # 更新股票/期权现价
-    ├── view_db.py         # 查看数据库内容
-    └── kill_streamlit.py  # 关闭 Streamlit 进程
+├── update_price.py     # 更新股票/期权现价
+├── view_db.py          # 查看数据库内容
+├── daily_refresh.py    # 离线自动日更
+├── scripts/
+│   └── install_daily_refresh_launchd.sh  # macOS 定时任务安装
+└── README.md           # 本文档
 ```
 
 ## 🛠️ 工具脚本
@@ -136,13 +140,6 @@ python3 view_db.py
 
 # 查看快速概览
 python3 view_db.py --quick
-```
-
-### kill_streamlit.py - 关闭 Streamlit
-
-```bash
-# 关闭所有 Streamlit 进程
-python3 kill_streamlit.py
 ```
 
 ### daily_refresh.py - 离线自动日更

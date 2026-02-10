@@ -56,9 +56,15 @@ def _sync_privacy_mode_to_query(enabled):
         pass
 
 
+query_privacy = _get_privacy_mode_from_query()
 if 'privacy_mode' not in st.session_state:
-    query_privacy = _get_privacy_mode_from_query()
     st.session_state['privacy_mode'] = bool(query_privacy) if query_privacy is not None else False
+
+# 仅在 query 值发生变化时同步到 session，避免覆盖用户手动切换
+last_query_privacy = st.session_state.get('_last_query_privacy')
+if query_privacy is not None and query_privacy != last_query_privacy:
+    st.session_state['privacy_mode'] = bool(query_privacy)
+st.session_state['_last_query_privacy'] = query_privacy
 
 
 def is_privacy_mode():
@@ -563,6 +569,71 @@ with col_privacy:
 privacy_mode = is_privacy_mode()
 _sync_privacy_mode_to_query(privacy_mode)
 
+if privacy_mode:
+    st.markdown(
+        """
+        <style>
+        .privacy-fab-left {
+            position: fixed;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 9998;
+        }
+        .privacy-fab-left form {
+            margin: 0;
+        }
+        .privacy-fab-left button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            gap: 6px;
+            min-height: 132px;
+            padding: 12px 10px;
+            border-radius: 12px;
+            border: 1px solid #fda4af;
+            background: linear-gradient(180deg, #ffe4e6 0%, #fecdd3 100%);
+            color: #9f1239;
+            font-weight: 700;
+            font-size: 12px;
+            letter-spacing: 0.4px;
+            text-decoration: none;
+            box-shadow: 0 8px 20px rgba(190, 24, 93, 0.22);
+            transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+            cursor: pointer;
+        }
+        .privacy-fab-left button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 24px rgba(190, 24, 93, 0.28);
+            background: linear-gradient(180deg, #fecdd3 0%, #fda4af 100%);
+        }
+        @media (max-width: 768px) {
+            .privacy-fab-left {
+                left: 8px;
+                top: auto;
+                bottom: 100px;
+                transform: none;
+            }
+            .privacy-fab-left button {
+                writing-mode: horizontal-tb;
+                min-height: auto;
+                padding: 8px 10px;
+                border-radius: 10px;
+            }
+        }
+        </style>
+        <div class="privacy-fab-left">
+            <form method="get" action="">
+                <input type="hidden" name="privacy" value="0" />
+                <button type="submit" title="点击关闭隐私模式">🙈 隐私中</button>
+            </form>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
 mc1, mc2 = st.columns(2)
 if "US" in market_mode:
     vix, tnx = macro_data['vix'], macro_data['tnx']
@@ -635,6 +706,7 @@ final_net_asset = market_val_usd + cash_balance
 base = total_invested
 pnl = final_net_asset - base
 ret_pct = (pnl / base * 100) if base > 0 else 0.0
+holding_ratio_pct = (market_val_usd / final_net_asset * 100) if abs(final_net_asset) > 1e-9 else 0.0
 
 # 保存快照
 db.save_daily_snapshot(date.today().strftime('%Y-%m-%d'), final_net_asset, base)
@@ -650,6 +722,13 @@ with st.container():
     st.markdown('<div class="net-asset-card">', unsafe_allow_html=True)
     c_main = st.columns(1)[0]
     c_main.metric("💎 净资产 (Net Assets USD)", fmt_money(final_net_asset, 0), f"{ret_pct:+.2f}%")
+    if is_privacy_mode():
+        c_main.caption("持仓市值: **** | 持仓占净资产: ****")
+    else:
+        if abs(final_net_asset) > 1e-9:
+            c_main.caption(f"持仓市值: {fmt_money(market_val_usd, 0)} | 持仓占净资产: {holding_ratio_pct:.1f}%")
+        else:
+            c_main.caption(f"持仓市值: {fmt_money(market_val_usd, 0)} | 持仓占净资产: N/A")
     st.markdown('</div>', unsafe_allow_html=True)
 
 st.write("")
@@ -752,15 +831,22 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
             lambda d: ut.get_badge_info(d)[0] + " " + ut.get_badge_info(d)[1])
 
         display_df = portfolio_df.sort_values('Market Value', ascending=False)
-        display_table = display_df.copy()
-        if privacy_mode:
-            for col in ['Avg Cost', 'Price', 'Market Value']:
-                if col in display_table.columns:
-                    display_table[col] = "****"
-
-        display_table = display_table[
+        display_table = display_df[
             ["Sector", "Symbol", "Quantity", "Avg Cost", "Price", "Market Value", "Safety Margin", "Badge", "Days Held"]
         ].copy()
+
+        column_defs = [
+            {"key": "Sector", "label": "赛道", "width": 108, "sensitive": False},
+            {"key": "Symbol", "label": "代码", "width": 96, "sensitive": False},
+            {"key": "Quantity", "label": "数量", "width": 82, "sensitive": True},
+            {"key": "Avg Cost", "label": "买入价", "width": 98, "sensitive": False},
+            {"key": "Price", "label": "现价", "width": 96, "sensitive": False},
+            {"key": "Market Value", "label": "市值", "width": 112, "sensitive": True},
+            {"key": "Safety Margin", "label": "安全边际", "width": 220, "sensitive": False},
+            {"key": "Badge", "label": "荣誉", "width": 148, "sensitive": False},
+            {"key": "Days Held", "label": "天数", "width": 74, "sensitive": False},
+        ]
+        visible_columns = [col for col in column_defs if not (privacy_mode and col["sensitive"])]
 
         def fmt_int(value):
             try:
@@ -768,45 +854,53 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
             except (TypeError, ValueError):
                 return ""
 
-        def fmt_money_or_masked(value, decimals):
-            if isinstance(value, str):
-                return value
+        def fmt_money(value, decimals):
             try:
                 return f"${float(value):,.{decimals}f}"
             except (TypeError, ValueError):
                 return ""
 
+        colgroup_html = "<colgroup>" + "".join(
+            [f"<col style='width:{col['width']}px;'>" for col in visible_columns]
+        ) + "</colgroup>"
+        headers_html = "".join(
+            ["<th>{}</th>".format(html.escape(col["label"])) for col in visible_columns]
+        )
+        table_min_width = max(sum(col["width"] for col in visible_columns), 680)
+
         table_rows = []
         for _, row in display_table.iterrows():
-            safety = row.get("Safety Margin", 0)
-            try:
-                safety_float = float(safety)
-            except (TypeError, ValueError):
-                safety_float = 0.0
-            bar_width = max(0.0, min(abs(safety_float), 100.0))
-            sign_cls = "sm-pos" if safety_float > 0 else "sm-neg" if safety_float < 0 else "sm-zero"
-            safety_label = f"{safety_float:+.1f}%"
+            cells = []
+            for col in visible_columns:
+                key = col["key"]
+                if key == "Safety Margin":
+                    try:
+                        safety_float = float(row.get("Safety Margin", 0) or 0)
+                    except (TypeError, ValueError):
+                        safety_float = 0.0
+                    bar_width = max(0.0, min(abs(safety_float), 100.0))
+                    sign_cls = "sm-pos" if safety_float > 0 else "sm-neg" if safety_float < 0 else "sm-zero"
+                    safety_label = f"{safety_float:+.1f}%"
+                    cells.append(
+                        "<td>"
+                        "<div class='sm-wrap'>"
+                        "<div class='sm-track'>"
+                        f"<div class='sm-fill {sign_cls}' style='width:{bar_width:.1f}%;'></div>"
+                        "</div>"
+                        f"<span class='sm-label {sign_cls}'>{safety_label}</span>"
+                        "</div>"
+                        "</td>"
+                    )
+                elif key in ("Quantity", "Days Held"):
+                    cells.append(f"<td>{fmt_int(row.get(key, ''))}</td>")
+                elif key in ("Avg Cost", "Price"):
+                    cells.append(f"<td>{fmt_money(row.get(key, ''), 2)}</td>")
+                elif key == "Market Value":
+                    cells.append(f"<td>{fmt_money(row.get(key, ''), 0)}</td>")
+                else:
+                    cells.append(f"<td>{html.escape(str(row.get(key, '')))}</td>")
 
-            table_rows.append(
-                "<tr>"
-                f"<td>{html.escape(str(row.get('Sector', '')))}</td>"
-                f"<td>{html.escape(str(row.get('Symbol', '')))}</td>"
-                f"<td>{fmt_int(row.get('Quantity', ''))}</td>"
-                f"<td>{fmt_money_or_masked(row.get('Avg Cost', ''), 2)}</td>"
-                f"<td>{fmt_money_or_masked(row.get('Price', ''), 2)}</td>"
-                f"<td>{fmt_money_or_masked(row.get('Market Value', ''), 0)}</td>"
-                "<td>"
-                "<div class='sm-wrap'>"
-                "<div class='sm-track'>"
-                f"<div class='sm-fill {sign_cls}' style='width:{bar_width:.1f}%;'></div>"
-                "</div>"
-                f"<span class='sm-label {sign_cls}'>{safety_label}</span>"
-                "</div>"
-                "</td>"
-                f"<td>{html.escape(str(row.get('Badge', '')))}</td>"
-                f"<td>{fmt_int(row.get('Days Held', ''))}</td>"
-                "</tr>"
-            )
+            table_rows.append("<tr>" + "".join(cells) + "</tr>")
 
         st.markdown(
             """
@@ -822,7 +916,6 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
                 padding: 9px 10px; border-bottom: 1px solid #f1f5f9; color: #0f172a; white-space: nowrap;
             }
             .holdings-table tbody tr:hover { background: #f8fafc; }
-            .holdings-table th:nth-child(7), .holdings-table td:nth-child(7) { width: 220px; }
             .sm-wrap { display: flex; align-items: center; gap: 8px; width: 100%; }
             .sm-track {
                 flex: 1 1 auto; min-width: 120px; height: 8px; border-radius: 999px; overflow: hidden;
@@ -842,9 +935,10 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
         )
         st.markdown(
             "<div class='holdings-wrap'>"
-            "<table class='holdings-table'>"
+            f"<table class='holdings-table' style='min-width:{table_min_width}px;'>"
+            f"{colgroup_html}"
             "<thead><tr>"
-            "<th>赛道</th><th>代码</th><th>持仓</th><th>成本</th><th>现价</th><th>市值</th><th>安全边际</th><th>荣誉</th><th>天数</th>"
+            f"{headers_html}"
             "</tr></thead>"
             f"<tbody>{''.join(table_rows)}</tbody>"
             "</table>"
