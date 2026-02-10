@@ -14,6 +14,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import data_manager as db
 import utils as ut
 import pandas as pd
+from services.risk_rules import concentration_band
+from services.risk_rules import leverage_band
+from services.risk_rules import sector_concentration_band
 
 
 class AlertLevel:
@@ -57,21 +60,22 @@ class AlertSystem:
         top3 = portfolio_df.nlargest(3, 'Market Value')['Market Value'].sum()
         concentration = (top3 / market_val * 100)
         
-        if concentration < 60:
+        conc_band = concentration_band(concentration)
+        if conc_band == "critical_low":
             self.alerts.append(Alert(
                 AlertLevel.CRITICAL,
                 "集中度过低（<60%）",
                 f"Top3 集中度仅 {concentration:.1f}%，过度分散可能导致收益被稀释",
                 action="考虑增加持仓集中度，聚焦核心标的"
             ))
-        elif concentration < 70:
+        elif conc_band == "warning_low":
             self.alerts.append(Alert(
                 AlertLevel.WARNING,
                 "集中度偏低（60-70%）",
                 f"Top3 集中度 {concentration:.1f}%，略低于理想水平",
                 action="可适度提高核心持仓占比"
             ))
-        elif concentration < 80:
+        elif conc_band == "info_low":
             self.alerts.append(Alert(
                 AlertLevel.INFO,
                 "集中度接近阈值（70-80%）",
@@ -116,21 +120,22 @@ class AlertSystem:
             
         leverage = market_val / net_asset
         
-        if leverage > 2.0:
+        lev_band = leverage_band(leverage)
+        if lev_band == "critical_high":
             self.alerts.append(Alert(
                 AlertLevel.CRITICAL,
                 "杠杆率过高（>2.0x）",
                 f"当前杠杆率 {leverage:.2f}x，风险极大",
                 action="立即减仓，降低杠杆"
             ))
-        elif leverage > 1.5:
+        elif lev_band == "warning_high":
             self.alerts.append(Alert(
                 AlertLevel.WARNING,
                 "杠杆率偏高（1.5-2.0x）",
                 f"当前杠杆率 {leverage:.2f}x",
                 action="关注融资成本，准备调整"
             ))
-        elif leverage > 1.2:
+        elif lev_band == "info_high":
             self.alerts.append(Alert(
                 AlertLevel.INFO,
                 "杠杆率略高（1.2-1.5x）",
@@ -153,21 +158,22 @@ class AlertSystem:
         for sector, val in sector_df.items():
             pct = (val / total * 100) if total > 0 else 0
             
-            if pct > 80:
+            sector_band = sector_concentration_band(pct)
+            if sector_band == "critical_high":
                 self.alerts.append(Alert(
                     AlertLevel.CRITICAL,
                     f"赛道过度集中（{sector} > 80%）",
                     f"{sector} 占比 {pct:.1f}%",
                     action="立即分散配置，降低单一赛道风险"
                 ))
-            elif pct > 70:
+            elif sector_band == "warning_high":
                 self.alerts.append(Alert(
                     AlertLevel.WARNING,
                     f"赛道集中度高（{sector} 70-80%）",
                     f"{sector} 占比 {pct:.1f}%",
                     action="关注赛道风险，考虑适度分散"
                 ))
-            elif pct > 60:
+            elif sector_band == "info_high":
                 self.alerts.append(Alert(
                     AlertLevel.INFO,
                     f"赛道占比较高（{sector} 60-70%）",

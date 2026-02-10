@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Callable, Dict, Tuple
 
 import pandas as pd
+from services.risk_rules import concentration_band
+from services.risk_rules import leverage_band
 
 
 def filter_active_positions(portfolio_df: pd.DataFrame, min_quantity: float = 0.01) -> pd.DataFrame:
@@ -76,17 +78,18 @@ def calculate_account_metrics(
 
 
 def concentration_status(top3_conc: float) -> Tuple[str, str]:
-    if top3_conc < 60:
+    band = concentration_band(top3_conc)
+    if band == "critical_low":
         return "过低", "inverse"
-    if top3_conc < 70:
+    if band == "warning_low":
         return "偏低", "inverse"
-    if top3_conc < 80:
+    if band == "info_low":
         return "接近阈值", "off"
     return "良好 ✓", "normal"
 
 
 def leverage_status(lev_ratio: float) -> Tuple[str, str]:
-    if lev_ratio > 1.2:
+    if leverage_band(lev_ratio) in ("info_high", "warning_high", "critical_high"):
         return "偏高", "inverse"
     return "安全", "normal"
 
@@ -126,4 +129,3 @@ def build_holdings_display_df(
     df["Safety Margin"] = df.apply(_calc_safety_margin, axis=1)
     df["Badge"] = df["Days Held"].apply(lambda d: " ".join(badge_resolver(d)))
     return df.sort_values("Market Value", ascending=False)
-
