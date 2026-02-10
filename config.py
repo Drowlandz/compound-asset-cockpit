@@ -127,18 +127,25 @@ CUSTOM_CSS = """
         border-left: 6px solid #2563eb;
     }
 
-    /* 悬浮按钮 */
-    div.stButton:has(button:active), div.stButton:last-of-type {
-        position: fixed; bottom: 40px; right: 40px; z-index: 9999; width: auto;
+    /* 悬浮按钮（仅绑定 fab 容器，避免误伤其他按钮） */
+    .st-key-fab_wrap div[data-testid="stButton"] {
+        position: fixed;
+        bottom: 40px;
+        right: 40px;
+        z-index: 9999;
+        width: auto;
     }
-    div.stButton:last-of-type > button {
+    .st-key-fab_wrap div[data-testid="stButton"] > button {
         border-radius: 50%; width: 64px; height: 64px; font-size: 28px;
         background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
         color: white; box-shadow: 0 10px 25px rgba(220, 38, 38, 0.4); 
         border: 2px solid #fff;
         transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
     }
-    div.stButton:last-of-type > button:hover { transform: scale(1.15) rotate(90deg); box-shadow: 0 15px 35px rgba(220, 38, 38, 0.5); }
+    .st-key-fab_wrap div[data-testid="stButton"] > button:hover {
+        transform: scale(1.15) rotate(90deg);
+        box-shadow: 0 15px 35px rgba(220, 38, 38, 0.5);
+    }
 
     /* 操作中心弹窗（克制风格） */
     div[data-testid="stDialog"] div[role="dialog"] {

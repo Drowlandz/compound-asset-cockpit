@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
+from pathlib import Path
 import html
 import data_manager as db
 import config as cf
@@ -93,6 +94,117 @@ def money_col(label, fmt):
 def invalidate_portfolio_cache():
     st.session_state.pop('portfolio_cache', None)
     st.session_state.pop('last_update', None)
+
+
+def get_donation_qr_candidates():
+    base = Path(__file__).resolve().parent
+    return {
+        "微信打赏": [
+            base / "assets" / "donate" / "wechat_qr.png",
+            base / "assets" / "wechat_qr.png",
+            base / "wechat_qr.png",
+        ],
+        "支付宝打赏": [
+            base / "assets" / "donate" / "alipay_qr.png",
+            base / "assets" / "alipay_qr.png",
+            base / "alipay_qr.png",
+        ],
+    }
+
+
+def resolve_donation_qr_paths():
+    resolved = {}
+    for label, candidates in get_donation_qr_candidates().items():
+        for p in candidates:
+            if p.exists():
+                resolved[label] = p
+                break
+    return resolved
+
+
+@st.dialog("☕ 打赏支持")
+def show_donation_dialog():
+    qr_paths = resolve_donation_qr_paths()
+    if not qr_paths:
+        st.info("未检测到二维码图片。")
+        return
+
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stDialog"] div[role="dialog"]:has(.st-key-donate_dialog_body) {
+            max-width: 540px !important;
+            width: min(540px, 92vw) !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(.st-key-donate_dialog_body) [data-testid="stImage"] img {
+            border-radius: 14px;
+            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.12);
+        }
+        @media (max-width: 768px) {
+            div[data-testid="stDialog"] div[role="dialog"]:has(.st-key-donate_dialog_body) {
+                width: 94vw !important;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.container(key="donate_dialog_body"):
+        for label in ["微信打赏", "支付宝打赏"]:
+            path = qr_paths.get(label)
+            if path is None:
+                continue
+            left, center, right = st.columns([0.19, 0.62, 0.19])
+            with center:
+                st.image(str(path), use_container_width=True)
+
+
+def render_donation_section():
+    st.divider()
+    st.markdown(
+        """
+        <style>
+        .st-key-donate_card_area div[data-testid="stButton"] > button {
+            width: 100%;
+            min-height: 92px;
+            border-radius: 16px;
+            border: 1px solid #fdba74;
+            background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+            color: #7c2d12;
+            font-weight: 800;
+            font-size: 18px;
+            letter-spacing: 0.2px;
+            line-height: 1.35;
+            white-space: pre-line;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+            transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
+        }
+        .st-key-donate_card_area div[data-testid="stButton"] > button:hover {
+            transform: translateY(-2px) scale(1.01);
+            box-shadow: 0 16px 32px rgba(15, 23, 42, 0.14);
+            filter: saturate(1.05);
+            border-color: #fb923c;
+        }
+        .st-key-donate_card_area div[data-testid="stButton"] > button:focus {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.25), 0 10px 24px rgba(15, 23, 42, 0.08);
+        }
+        @media (max-width: 768px) {
+            .st-key-donate_card_area div[data-testid="stButton"] > button {
+                min-height: 80px;
+                font-size: 15px;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.container(key="donate_card_area"):
+        card_text = "☕ 这个工具帮到你了吗？请我喝杯咖啡吧\n点击查看收款码"
+        if st.button(card_text, key="donate_card_trigger", use_container_width=True):
+            show_donation_dialog()
 
 
 # ================= 2. 弹窗逻辑 =================
@@ -1085,6 +1197,11 @@ with cal_left:
         )
     st.caption(f"统计截止：{anchor_date:%Y-%m-%d}")
 
+# --- 7. 打赏支持 ---
+render_donation_section()
+
 # 底部悬浮按钮
 st.markdown('<span id="fab-anchor"></span>', unsafe_allow_html=True)
-if st.button("➕", key="fab_main"): show_add_modal()
+with st.container(key="fab_wrap"):
+    if st.button("➕", key="fab_main"):
+        show_add_modal()
