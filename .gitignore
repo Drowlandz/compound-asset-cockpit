@@ -1,0 +1,14 @@
+investments.db
+.DS_Store
+__pycache__/
+.pycache/
+
+# Local generated outputs
+alerts/
+reports/
+logs/
+
+# Local private/experimental scripts
+report_generator.py
+report_generator_backup.py
+test.py
