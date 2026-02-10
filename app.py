@@ -733,10 +733,20 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
     with col_r:
         st.caption("持仓明细 (自动折算 USD)")
         portfolio_df['PnL $'] = portfolio_df['Market Value'] - portfolio_df['Total Cost']
-        portfolio_df['Safety Margin'] = portfolio_df.apply(
-            lambda x: (x['Price'] - x['Avg Cost']) / x['Price'] * 100
-            if x['Price'] > 0 and x['Type'] == 'STOCK' else 0, axis=1
-        )
+        def calc_safety_margin(row):
+            asset_type = str(row.get('Type', '')).upper()
+            if asset_type not in ('STOCK', 'OPTION'):
+                return 0.0
+            try:
+                price = float(row.get('Price', 0) or 0)
+                avg_cost = float(row.get('Avg Cost', 0) or 0)
+            except (TypeError, ValueError):
+                return 0.0
+            if price <= 0:
+                return 0.0
+            return (price - avg_cost) / price * 100
+
+        portfolio_df['Safety Margin'] = portfolio_df.apply(calc_safety_margin, axis=1)
 
         portfolio_df['Badge'] = portfolio_df['Days Held'].apply(
             lambda d: ut.get_badge_info(d)[0] + " " + ut.get_badge_info(d)[1])
@@ -818,13 +828,13 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
                 flex: 1 1 auto; min-width: 120px; height: 8px; border-radius: 999px; overflow: hidden;
                 background: #e2e8f0; border: 1px solid #cbd5e1;
             }
-            .sm-fill { height: 100%; border-radius: 999px; }
-            .sm-fill.sm-pos { background: linear-gradient(90deg, #22c55e, #16a34a); }
-            .sm-fill.sm-neg { background: linear-gradient(90deg, #f87171, #dc2626); }
-            .sm-fill.sm-zero { background: #94a3b8; }
+            .sm-fill { height: 100%; border-radius: 999px; filter: saturate(0.72); }
+            .sm-fill.sm-pos { background: linear-gradient(90deg, rgba(34, 197, 94, 0.82), rgba(22, 163, 74, 0.82)); }
+            .sm-fill.sm-neg { background: linear-gradient(90deg, rgba(248, 113, 113, 0.82), rgba(220, 38, 38, 0.82)); }
+            .sm-fill.sm-zero { background: rgba(148, 163, 184, 0.9); }
             .sm-label { font-weight: 400; font-size: 13px; min-width: 56px; text-align: right; }
-            .sm-label.sm-pos { color: #16a34a; }
-            .sm-label.sm-neg { color: #dc2626; }
+            .sm-label.sm-pos { color: rgba(22, 163, 74, 0.86); }
+            .sm-label.sm-neg { color: rgba(220, 38, 38, 0.86); }
             .sm-label.sm-zero { color: #64748b; }
             </style>
             """,
