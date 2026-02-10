@@ -6,6 +6,8 @@ import data_manager as db
 import config as cf
 import utils as ut
 import ui
+from services import portfolio_service as pf_service
+from services.snapshot_service import save_today_snapshot
 
 # ================= 1. 初始化 =================
 st.set_page_config(page_title="长期复利资产驾驶舱", layout="wide", page_icon="🔭")
@@ -188,6 +190,7 @@ def show_add_modal():
     # --- 期权 ---
     with tab2:
         st.caption("记录期权开平仓，支持到期日/行权价/方向。")
+        st.info("📌 期权无法自动查询实时价格；估值使用你手动维护的“当前价格（每股）”。")
         o_side = st.radio("方向", ["BUY", "SELL"], horizontal=True, key="option_side_toggle")
         is_option_sell = (o_side == "SELL")
         option_sell_positions = db.get_open_option_positions()
@@ -311,6 +314,8 @@ def show_add_modal():
                     else "0"
                 )
                 option_price_raw = st.text_input("当前价格（每股）", value=option_price_default)
+                if existing_option_price is None:
+                    st.warning("⚠️ 当前合约尚未设置价格，系统无法自动抓取实时期权价。")
                 if st.form_submit_button("保存期权当前价格", use_container_width=True, type="primary"):
                     option_price, err_price = parse_float_input(option_price_raw, "当前价格（每股）", min_value=0.0)
                     if err_price:
@@ -660,15 +665,14 @@ portfolio_df = db.get_portfolio_summary()
 total_invested = db.get_total_invested()
 cash_balance = db.get_cash_balance()
 
-market_val_usd = 0
-total_cost_usd = 0
-max_days_held = 0
+market_val_usd = 0.0
+total_cost_usd = 0.0
+max_days_held = 0.0
 highest_badge_icon = "🌱"
 highest_badge_name = "新手"
 
 if not portfolio_df.empty:
-    portfolio_df['Quantity'] = pd.to_numeric(portfolio_df['Quantity'], errors='coerce').fillna(0)
-    portfolio_df = portfolio_df[portfolio_df['Quantity'] > 0.01]
+    portfolio_df = pf_service.filter_active_positions(portfolio_df)
 
     has_cache = (
         'last_update' in st.session_state
@@ -691,31 +695,33 @@ if not portfolio_df.empty:
         else:
             portfolio_df = cached_df
 
-    market_val_usd = portfolio_df['Market Value'].sum()
-    total_cost_usd = portfolio_df['Total Cost'].sum()
-
-    if 'Days Held' in portfolio_df.columns and not portfolio_df['Days Held'].isnull().all():
-        max_days_held = portfolio_df['Days Held'].max()
-        highest_badge_icon, highest_badge_name = ut.get_badge_info(max_days_held)
+    max_days_held, highest_badge_icon, highest_badge_name = pf_service.get_highest_badge(
+        portfolio_df,
+        ut.get_badge_info
+    )
 
 st.markdown(
     f"""<div class="badge-container"><div class="badge-icon">{highest_badge_icon}</div><div class="badge-text">{highest_badge_name}<div class="badge-label">坚持 {int(max_days_held)} 天</div></div></div>""",
     unsafe_allow_html=True)
 
-final_net_asset = market_val_usd + cash_balance
-base = total_invested
-pnl = final_net_asset - base
-ret_pct = (pnl / base * 100) if base > 0 else 0.0
-holding_ratio_pct = (market_val_usd / final_net_asset * 100) if abs(final_net_asset) > 1e-9 else 0.0
+metrics = pf_service.calculate_account_metrics(
+    portfolio_df=portfolio_df,
+    cash_balance=cash_balance,
+    total_invested=total_invested
+)
+market_val_usd = metrics['market_val_usd']
+total_cost_usd = metrics['total_cost_usd']
+final_net_asset = metrics['final_net_asset']
+base = metrics['base']
+pnl = metrics['pnl']
+ret_pct = metrics['ret_pct']
+holding_ratio_pct = metrics['holding_ratio_pct']
+lev_ratio = metrics['lev_ratio']
+cash_ratio = metrics['cash_ratio']
+top3_conc = metrics['top3_conc']
 
 # 保存快照
-db.save_daily_snapshot(date.today().strftime('%Y-%m-%d'), final_net_asset, base)
-
-lev_ratio = (market_val_usd / final_net_asset) if final_net_asset > 0 else 999
-cash_ratio = (cash_balance / final_net_asset * 100) if final_net_asset > 0 else 0
-top3_conc = 0
-if market_val_usd > 0:
-    top3_conc = (portfolio_df.nlargest(3, 'Market Value')['Market Value'].sum() / market_val_usd) * 100
+save_today_snapshot(final_net_asset, base)
 
 # 核心指标看板
 with st.container():
@@ -734,18 +740,12 @@ with st.container():
 st.write("")
 
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("⚖️ 杠杆率", f"{lev_ratio:.2f}x", delta="安全" if lev_ratio <= 1.2 else "偏高",
-          delta_color="inverse" if lev_ratio > 1.2 else "normal")
+lev_delta, lev_color = pf_service.leverage_status(lev_ratio)
+c1.metric("⚖️ 杠杆率", f"{lev_ratio:.2f}x", delta=lev_delta, delta_color=lev_color)
 
 # 集中度告警（类似杠杆率的做法）
-if top3_conc < 60:
-    c2.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%", delta="过低", delta_color="inverse")
-elif top3_conc < 70:
-    c2.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%", delta="偏低", delta_color="inverse")
-elif top3_conc < 80:
-    c2.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%", delta="接近阈值", delta_color="off")
-else:
-    c2.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%", delta="良好 ✓", delta_color="normal")
+conc_delta, conc_color = pf_service.concentration_status(top3_conc)
+c2.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%", delta=conc_delta, delta_color=conc_color)
 
 c3.metric("🔫 现金/负债", fmt_money(abs(cash_balance), 0), f"{cash_ratio:+.1f}%")
 c4.metric("🛡️ 总利润 (Profit)", fmt_money(pnl, 0), help="净资产 - 总投入本金")
@@ -811,26 +811,7 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
 
     with col_r:
         st.caption("持仓明细 (自动折算 USD)")
-        portfolio_df['PnL $'] = portfolio_df['Market Value'] - portfolio_df['Total Cost']
-        def calc_safety_margin(row):
-            asset_type = str(row.get('Type', '')).upper()
-            if asset_type not in ('STOCK', 'OPTION'):
-                return 0.0
-            try:
-                price = float(row.get('Price', 0) or 0)
-                avg_cost = float(row.get('Avg Cost', 0) or 0)
-            except (TypeError, ValueError):
-                return 0.0
-            if price <= 0:
-                return 0.0
-            return (price - avg_cost) / price * 100
-
-        portfolio_df['Safety Margin'] = portfolio_df.apply(calc_safety_margin, axis=1)
-
-        portfolio_df['Badge'] = portfolio_df['Days Held'].apply(
-            lambda d: ut.get_badge_info(d)[0] + " " + ut.get_badge_info(d)[1])
-
-        display_df = portfolio_df.sort_values('Market Value', ascending=False)
+        display_df = pf_service.build_holdings_display_df(portfolio_df, ut.get_badge_info)
         display_table = display_df[
             ["Sector", "Symbol", "Quantity", "Avg Cost", "Price", "Market Value", "Safety Margin", "Badge", "Days Held"]
         ].copy()
