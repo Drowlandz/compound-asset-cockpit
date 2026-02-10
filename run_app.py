@@ -1,20 +1,20 @@
 import argparse
 import os
 import shutil
-import signal
-import subprocess
 import sys
-import time
 
 import streamlit.web.cli as stcli
+from services.launcher_service import resolve_path as resolve_path_impl
+from services.launcher_service import run_streamlit_with_auto_stop as run_streamlit_with_auto_stop_impl
 
 
 def resolve_path(path):
-    if getattr(sys, "frozen", False):
-        basedir = sys._MEIPASS
-    else:
-        basedir = os.path.dirname(__file__)
-    return os.path.join(basedir, path)
+    return resolve_path_impl(
+        path=path,
+        module_file=__file__,
+        frozen=getattr(sys, "frozen", False),
+        frozen_base=getattr(sys, "_MEIPASS", None),
+    )
 
 
 def run_plain_streamlit():
@@ -28,96 +28,15 @@ def run_plain_streamlit():
     return stcli.main()
 
 
-def count_active_clients(port, server_pid):
-    """
-    Count established TCP peers connected to the streamlit port.
-    Uses lsof on macOS.
-    """
-    try:
-        result = subprocess.run(
-            ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:ESTABLISHED"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except Exception:
-        return None
-
-    if result.returncode not in (0, 1):
-        return None
-    output = (result.stdout or "").strip()
-    if not output:
-        return 0
-
-    peers = set()
-    for line in output.splitlines()[1:]:
-        parts = line.split()
-        if len(parts) < 2:
-            continue
-        try:
-            pid = int(parts[1])
-        except ValueError:
-            continue
-        if pid == server_pid:
-            continue
-        peers.add(pid)
-    return len(peers)
-
-
 def run_streamlit_with_auto_stop(port=8501, idle_seconds=120, poll_seconds=3):
-    """
-    Launch streamlit as a child process and stop it after browser disconnect idle timeout.
-    """
     app_path = resolve_path("app.py")
-    env = os.environ.copy()
-    env["STREAMLIT_SERVER_HEADLESS"] = "true"
-
-    cmd = [
-        sys.executable,
-        "-m",
-        "streamlit",
-        "run",
-        app_path,
-        f"--server.port={port}",
-    ]
-    proc = subprocess.Popen(cmd, cwd=os.path.dirname(app_path), env=env)
-    print(f"Streamlit started at http://localhost:{port} (PID {proc.pid})")
-    print(f"Auto-stop enabled: idle {idle_seconds}s after last browser connection.")
-
-    first_client_seen = False
-    last_active_ts = time.monotonic()
-
-    try:
-        while proc.poll() is None:
-            active_clients = count_active_clients(port, proc.pid)
-            if active_clients is None:
-                time.sleep(poll_seconds)
-                continue
-
-            now = time.monotonic()
-            if active_clients > 0:
-                first_client_seen = True
-                last_active_ts = now
-            elif first_client_seen and (now - last_active_ts) >= idle_seconds:
-                print("No browser connection detected, stopping streamlit...")
-                proc.terminate()
-                try:
-                    proc.wait(timeout=8)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                break
-
-            time.sleep(poll_seconds)
-    except KeyboardInterrupt:
-        if proc.poll() is None:
-            proc.send_signal(signal.SIGINT)
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        return 130
-
-    return proc.returncode if proc.returncode is not None else 0
+    return run_streamlit_with_auto_stop_impl(
+        app_path=app_path,
+        python_executable=sys.executable,
+        port=port,
+        idle_seconds=idle_seconds,
+        poll_seconds=poll_seconds,
+    )
 
 
 def parse_args():

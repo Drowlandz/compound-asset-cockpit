@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sqlite3
 import warnings
 from datetime import date, datetime
 from typing import Dict, Optional, Tuple
@@ -25,10 +24,12 @@ warnings.filterwarnings(
     message="urllib3 v2 only supports OpenSSL 1.1.1+",
 )
 
-import requests
 import yfinance as yf
 
 import data_manager as db
+from services.market_data_service import detect_currency as shared_detect_currency
+from services.market_data_service import fetch_realtime_price as shared_fetch_realtime_price
+from services.market_data_service import get_exchange_rates as shared_get_exchange_rates
 
 # Keep scheduled logs clean when network is temporarily unavailable.
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
@@ -71,47 +72,15 @@ def parse_args() -> argparse.Namespace:
 
 
 def detect_currency(symbol: str) -> str:
-    sym = symbol.lower().strip()
-    if sym.isdigit() and len(sym) == 5:
-        return "HKD"
-    if sym.startswith("hk"):
-        return "HKD"
-    if sym.startswith("sh") or sym.startswith("sz") or (sym.isdigit() and len(sym) == 6):
-        return "CNY"
-    return "USD"
+    return shared_detect_currency(symbol)
 
 
 def get_exchange_rates() -> Dict[str, float]:
-    return {"USD": 1.0, "HKD": 0.128, "CNY": 0.138, "CNH": 0.138}
+    return shared_get_exchange_rates()
 
 
 def fetch_realtime_price(symbol: str, timeout_sec: float = 2.0) -> Optional[float]:
-    sym = symbol.lower().strip()
-    headers = {"Referer": "https://finance.sina.com.cn"}
-    try:
-        if " " in sym:
-            return None
-        if sym.isalpha():
-            url = f"https://hq.sinajs.cn/list=gb_{sym}"
-            resp = requests.get(url, headers=headers, timeout=timeout_sec)
-            content = resp.text.split('="')[1].split(",")
-            if len(content) > 1:
-                return float(content[1])
-        else:
-            if not (sym.startswith("sh") or sym.startswith("sz") or sym.startswith("hk")):
-                if len(sym) == 5:
-                    prefix = "hk"
-                else:
-                    prefix = "sh" if sym.startswith("6") else "sz"
-                sym = prefix + sym
-            url = f"https://hq.sinajs.cn/list={sym}"
-            resp = requests.get(url, headers=headers, timeout=timeout_sec)
-            content = resp.text.split('="')[1].split(",")
-            if len(content) > 3:
-                return float(content[6] if "hk" in sym else content[3])
-    except Exception:
-        return None
-    return None
+    return shared_fetch_realtime_price(symbol, timeout_sec=timeout_sec)
 
 
 def refresh_macro_cache() -> Dict[str, float]:
@@ -175,27 +144,11 @@ def refresh_stock_prices(portfolio_df) -> Tuple[int, Dict[str, float]]:
 
 
 def load_price_map() -> Dict[str, float]:
-    conn = sqlite3.connect(db.DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT symbol, current_price FROM stock_prices")
-    rows = cursor.fetchall()
-    conn.close()
-    return {
-        str(symbol).strip().upper(): float(price)
-        for symbol, price in rows
-        if symbol is not None and price is not None
-    }
+    return db.get_stock_price_map()
 
 
 def load_snapshot_for_day(snapshot_date: str) -> Optional[Tuple[float, float]]:
-    conn = sqlite3.connect(db.DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT total_asset, total_invested FROM daily_snapshots WHERE date = ?",
-        (snapshot_date,),
-    )
-    row = cursor.fetchone()
-    conn.close()
+    row = db.get_snapshot_by_date(snapshot_date)
     if not row:
         return None
     return safe_float(row[0]), safe_float(row[1])

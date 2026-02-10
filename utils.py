@@ -1,54 +1,28 @@
-import requests
 import yfinance as yf
 import streamlit as st
 import data_manager as db  # 引入数据库模块
-import sqlite3
-import os
 import pandas as pd
+from services.market_data_service import detect_currency as shared_detect_currency
+from services.market_data_service import fetch_realtime_price
+from services.market_data_service import get_exchange_rates as shared_get_exchange_rates
 
 
 # 1. 基础工具
 @st.cache_data(ttl=3600)
 def get_exchange_rates():
     """获取基础汇率 (相对于 USD)"""
-    return {'USD': 1.0, 'HKD': 0.128, 'CNY': 0.138, 'CNH': 0.138}
+    return shared_get_exchange_rates()
 
 
 def detect_currency(symbol):
     """代码 -> 币种"""
-    symbol = symbol.lower().strip()
-    if symbol.isdigit() and len(symbol) == 5: return 'HKD'
-    if symbol.startswith('hk'): return 'HKD'
-    if symbol.startswith('sh') or symbol.startswith('sz') or (symbol.isdigit() and len(symbol) == 6): return 'CNY'
-    return 'USD'
+    return shared_detect_currency(symbol)
 
 
 # 2. 价格 (必须实时)与 宏观 (可缓存)
 def get_realtime_price(symbol):
     """获取股票实时价格 (Sina)"""
-    symbol = symbol.lower().strip()
-    headers = {'Referer': 'https://finance.sina.com.cn'}
-    try:
-        if ' ' in symbol: return None
-        if symbol.isalpha():  # 美股
-            url = f"https://hq.sinajs.cn/list=gb_{symbol}"
-            resp = requests.get(url, headers=headers, timeout=2)
-            content = resp.text.split('="')[1].split(',')
-            if len(content) > 1: return float(content[1])
-        else:  # A股/港股
-            if not (symbol.startswith('sh') or symbol.startswith('sz') or symbol.startswith('hk')):
-                if len(symbol) == 5:
-                    prefix = 'hk'
-                else:
-                    prefix = 'sh' if symbol.startswith('6') else 'sz'
-                symbol = prefix + symbol
-            url = f"https://hq.sinajs.cn/list={symbol}"
-            resp = requests.get(url, headers=headers, timeout=2)
-            content = resp.text.split('="')[1].split(',')
-            if len(content) > 3: return float(content[6] if 'hk' in symbol else content[3])
-    except:
-        return None
-    return None
+    return fetch_realtime_price(symbol, timeout_sec=2.0)
 
 
 @st.cache_data(ttl=1800)
@@ -174,9 +148,6 @@ def get_stock_price_from_db(symbol, asset_category='STOCK', option_info=None):
         asset_category: 资产类别 ('STOCK' 或 'OPTION')
         option_info: 期权附加信息 (dict: expiration, option_type)
     """
-    conn = sqlite3.connect(os.path.join(os.path.dirname(__file__), 'investments.db'))
-    cursor = conn.cursor()
-    
     prices = {}
     
     # 1. 构建可能的查找键
@@ -199,16 +170,9 @@ def get_stock_price_from_db(symbol, asset_category='STOCK', option_info=None):
     
     # 2. 逐一查找
     for key, cat in search_keys:
-        cursor.execute('''
-            SELECT current_price, asset_category FROM stock_prices 
-            WHERE symbol = ?
-        ''', (key,))
-        row = cursor.fetchone()
-        if row:
-            # 允许 0 作为有效价格；仅在 NULL 时视为缺失
-            prices[key] = row[0] if row[0] is not None else None
-    
-    conn.close()
+        row_price = db.get_stock_price(key)
+        if row_price is not None:
+            prices[key] = row_price
     
     # 3. 返回结果
     if asset_category == 'OPTION' and option_info:

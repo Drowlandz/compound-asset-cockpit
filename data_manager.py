@@ -292,6 +292,108 @@ def upsert_stock_price(symbol, current_price, source='manual', asset_category='S
     conn.close()
 
 
+def get_stock_price(symbol):
+    """按 symbol 读取单条价格；不存在返回 None。"""
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT current_price FROM stock_prices WHERE symbol = ?", (str(symbol).upper().strip(),))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return row[0] if row[0] is not None else None
+
+
+def get_stock_price_map():
+    """读取全部非空价格，返回 {SYMBOL: current_price}。"""
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT symbol, current_price FROM stock_prices")
+    rows = c.fetchall()
+    conn.close()
+    return {
+        str(symbol).strip().upper(): float(price)
+        for symbol, price in rows
+        if symbol is not None and price is not None
+    }
+
+
+def clear_stock_prices():
+    """清空 stock_prices 表。"""
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("DELETE FROM stock_prices")
+    conn.commit()
+    conn.close()
+
+
+def get_snapshot_by_date(snapshot_date):
+    """读取指定日期快照，返回 (total_asset, total_invested) 或 None。"""
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        "SELECT total_asset, total_invested FROM daily_snapshots WHERE date = ?",
+        (snapshot_date,),
+    )
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return row[0], row[1]
+
+
+def get_active_stock_holdings():
+    """返回当前股票持仓聚合（排除 OPTION 和已删除）。"""
+    conn = sqlite3.connect(DB_NAME)
+    query = """
+        SELECT symbol, asset_category, SUM(quantity) as qty
+        FROM transactions
+        WHERE is_deleted = 0 AND asset_category != 'OPTION'
+        GROUP BY symbol
+        HAVING qty > 0
+    """
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    return df
+
+
+def get_active_option_symbols():
+    """返回当前活动 OPTION symbol 列表（去重）。"""
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT DISTINCT symbol
+        FROM transactions
+        WHERE asset_category = 'OPTION' AND is_deleted = 0
+        """
+    )
+    rows = c.fetchall()
+    conn.close()
+    return [row[0] for row in rows if row and row[0] is not None]
+
+
+def get_current_prices_with_holdings():
+    """返回现价与持仓聚合视图，用于 CLI 展示。"""
+    conn = sqlite3.connect(DB_NAME)
+    query = """
+        SELECT sp.symbol, sp.current_price, sp.price_source, sp.updated_at,
+               COALESCE(t.qty, 0) as quantity, COALESCE(t.category, 'UNKNOWN') as category
+        FROM stock_prices sp
+        LEFT JOIN (
+            SELECT symbol, SUM(quantity) as qty, asset_category as category
+            FROM transactions
+            WHERE is_deleted = 0
+            GROUP BY symbol
+        ) t ON sp.symbol = t.symbol
+        WHERE COALESCE(t.qty, 0) > 0
+        ORDER BY sp.updated_at DESC
+    """
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    return df
+
+
 def get_deleted_transactions_last_7_days():
     conn = sqlite3.connect(DB_NAME)
     query = "SELECT * FROM transactions WHERE is_deleted = 1 ORDER BY id DESC LIMIT 50"

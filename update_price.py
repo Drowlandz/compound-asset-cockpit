@@ -12,80 +12,35 @@
   python3 update_price.py --list-holdings              # 查看当前持仓
 """
 
-import sqlite3
 import sys
-import os
-from datetime import datetime
+import pandas as pd
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "investments.db")
+import data_manager as db
 
 
 def get_holdings():
     """获取当前持有的股票列表（排除 OPTION 和已删除）"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    # 获取所有未删除的交易
-    cursor.execute("""
-        SELECT symbol, asset_category, SUM(quantity) as qty
-        FROM transactions 
-        WHERE is_deleted = 0 AND asset_category != 'OPTION'
-        GROUP BY symbol
-        HAVING qty > 0
-    """)
-    
-    holdings = []
-    for row in cursor.fetchall():
-        holdings.append({
-            'symbol': row[0],
-            'category': row[1],
-            'quantity': row[2]
-        })
-    
-    conn.close()
-    return holdings
+    df = db.get_active_stock_holdings()
+    if df.empty:
+        return []
+    return [
+        {
+            "symbol": row["symbol"],
+            "category": row["asset_category"],
+            "quantity": row["qty"],
+        }
+        for _, row in df.iterrows()
+    ]
 
 
 def get_option_symbols():
     """获取所有 OPTION 类型的股票代码（这些不需要更新）"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        SELECT DISTINCT symbol 
-        FROM transactions 
-        WHERE asset_category = 'OPTION' AND is_deleted = 0
-    """)
-    
-    options = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return options
+    return db.get_active_option_symbols()
 
 
 def init_price_table():
     """初始化现价表（包含 asset_category）"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    # 检查是否存在 asset_category 列
-    cursor.execute("PRAGMA table_info(stock_prices)")
-    columns = [col[1] for col in cursor.fetchall()]
-    
-    if 'asset_category' not in columns:
-        cursor.execute('ALTER TABLE stock_prices ADD COLUMN asset_category TEXT')
-    
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS stock_prices (
-            symbol TEXT PRIMARY KEY,
-            current_price REAL,
-            price_source TEXT,
-            updated_at TEXT,
-            asset_category TEXT
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
+    db.init_db()
 
 
 def update_stock_price(symbol, new_price, source='manual', force=False, asset_category='STOCK'):
@@ -106,17 +61,7 @@ def update_stock_price(symbol, new_price, source='manual', force=False, asset_ca
         print(f"⏭️  跳过 {symbol} (OPTION 类型，使用 --manual 强制更新)")
         return False
     
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    cursor.execute('''
-        INSERT OR REPLACE INTO stock_prices (symbol, current_price, price_source, updated_at, asset_category)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (symbol.upper(), float(new_price), source, now, asset_category))
-    
-    conn.commit()
-    conn.close()
+    db.upsert_stock_price(symbol.upper(), float(new_price), source=source, asset_category=asset_category)
     
     print(f"✅ {symbol.upper()} = ${float(new_price):.2f} ({asset_category})")
     return True
@@ -199,24 +144,7 @@ def list_holdings():
 def view_current_prices():
     """查看当前保存的股价"""
     init_price_table()
-    
-    conn = sqlite3.connect(DB_PATH)
-    
-    # 获取所有持仓的现价（包含 asset_category）
-    df = pd.read_sql_query("""
-        SELECT sp.symbol, sp.current_price, sp.price_source, sp.updated_at,
-               COALESCE(t.qty, 0) as quantity, COALESCE(t.category, 'UNKNOWN') as category
-        FROM stock_prices sp
-        LEFT JOIN (
-            SELECT symbol, SUM(quantity) as qty, asset_category as category
-            FROM transactions 
-            WHERE is_deleted = 0
-            GROUP BY symbol
-        ) t ON sp.symbol = t.symbol
-        WHERE COALESCE(t.qty, 0) > 0
-        ORDER BY sp.updated_at DESC
-    """, conn)
-    conn.close()
+    df = db.get_current_prices_with_holdings()
     
     if df.empty:
         print("\n📭 暂无股价数据")
@@ -268,18 +196,11 @@ def view_current_prices():
 def reset_prices():
     """清空所有股价数据"""
     init_price_table()
-    
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM stock_prices")
-    conn.commit()
-    conn.close()
+    db.clear_stock_prices()
     print("✅ 已清空所有股价数据")
 
 
 if __name__ == "__main__":
-    import pandas as pd
-    
     if len(sys.argv) == 1:
         print("用法:")
         print("  python3 update_price.py AMZN 8.55                   # 更新单个股票")
