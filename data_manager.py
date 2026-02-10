@@ -216,6 +216,82 @@ def get_all_transactions(include_deleted=False):
     return df
 
 
+def get_stock_holdings_for_sell():
+    """仅返回股票(STOCK)的可卖持仓，避免把期权混入股票卖出列表。"""
+    df = get_all_transactions(include_deleted=False)
+    if df.empty:
+        return pd.DataFrame(columns=['Symbol', 'Quantity'])
+
+    df = df[df['asset_category'] == 'STOCK'].copy()
+    if df.empty:
+        return pd.DataFrame(columns=['Symbol', 'Quantity'])
+
+    df['signed_qty'] = df.apply(
+        lambda r: float(r['quantity']) if r['type'] == 'BUY' else -float(r['quantity']),
+        axis=1
+    )
+    summary = df.groupby('symbol', as_index=False)['signed_qty'].sum()
+    summary = summary[summary['signed_qty'] > 0.01].copy()
+    summary.rename(columns={'symbol': 'Symbol', 'signed_qty': 'Quantity'}, inplace=True)
+    return summary.sort_values('Symbol').reset_index(drop=True)
+
+
+def get_open_option_positions():
+    """返回当前仍持有的期权合约持仓（按 symbol+expiration+option_type+strike 聚合）。"""
+    df = get_all_transactions(include_deleted=False)
+    if df.empty:
+        return pd.DataFrame(columns=['symbol', 'expiration', 'option_type', 'strike', 'quantity'])
+
+    df = df[df['asset_category'] == 'OPTION'].copy()
+    if df.empty:
+        return pd.DataFrame(columns=['symbol', 'expiration', 'option_type', 'strike', 'quantity'])
+
+    df['signed_qty'] = df.apply(
+        lambda r: float(r['quantity']) if r['type'] == 'BUY' else -float(r['quantity']),
+        axis=1
+    )
+
+    grouped = (
+        df.groupby(['symbol', 'expiration', 'option_type', 'strike'], as_index=False, dropna=False)['signed_qty']
+        .sum()
+    )
+    grouped = grouped[grouped['signed_qty'] > 0.01].copy()
+    grouped.rename(columns={'signed_qty': 'quantity'}, inplace=True)
+    return grouped.sort_values(['symbol', 'expiration', 'option_type', 'strike']).reset_index(drop=True)
+
+
+def build_option_price_symbol(symbol, expiration, option_type, strike=None):
+    """构建期权价格缓存键，优先包含 strike，避免同到期同方向不同执行价冲突。"""
+    sym = str(symbol).upper().strip()
+    exp = str(expiration).strip()
+    o_type = str(option_type).upper().strip()
+
+    if strike is None or str(strike).strip() == "":
+        return f"{sym} {exp} {o_type}"
+
+    try:
+        strike_txt = f"{float(strike):g}"
+    except (TypeError, ValueError):
+        strike_txt = str(strike).strip()
+    return f"{sym} {exp} {o_type} {strike_txt}"
+
+
+def upsert_stock_price(symbol, current_price, source='manual', asset_category='STOCK'):
+    """写入/更新 stock_prices 表。"""
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute(
+        '''
+        INSERT OR REPLACE INTO stock_prices (symbol, current_price, price_source, updated_at, asset_category)
+        VALUES (?, ?, ?, ?, ?)
+        ''',
+        (str(symbol).upper().strip(), float(current_price), source, now, asset_category)
+    )
+    conn.commit()
+    conn.close()
+
+
 def get_deleted_transactions_last_7_days():
     conn = sqlite3.connect(DB_NAME)
     query = "SELECT * FROM transactions WHERE is_deleted = 1 ORDER BY id DESC LIMIT 50"
@@ -238,7 +314,11 @@ def get_portfolio_summary():
                 'Symbol': sym, 'Raw Symbol': sym if row['asset_category'] == 'STOCK' else (
                     row['symbol'].split()[0] if ' ' in row['symbol'] else row['symbol']),
                 'Quantity': 0.0, 'Total Cost': 0.0, 'Multiplier': row['multiplier'], 'Type': row['asset_category'],
-                'Days Held': 0, 'First Buy Date': None
+                'Days Held': 0, 'First Buy Date': None,
+                # 期权合约元数据（用于按合约查现价）
+                'expiration': row['expiration'] if row['asset_category'] == 'OPTION' else None,
+                'option_type': row['option_type'] if row['asset_category'] == 'OPTION' else None,
+                'strike': row['strike'] if row['asset_category'] == 'OPTION' else None,
             }
         p = portfolio[sym]
         qty = float(row['quantity'])
@@ -257,6 +337,15 @@ def get_portfolio_summary():
                 p['Quantity'] -= qty
             else:
                 p['Quantity'] -= qty
+
+        # 若为期权，尽量补齐合约元数据，避免估值查不到对应期权现价
+        if p['Type'] == 'OPTION':
+            if p.get('expiration') in (None, '') and row.get('expiration') not in (None, ''):
+                p['expiration'] = row.get('expiration')
+            if p.get('option_type') in (None, '') and row.get('option_type') not in (None, ''):
+                p['option_type'] = row.get('option_type')
+            if p.get('strike') in (None, '') and row.get('strike') not in (None, ''):
+                p['strike'] = row.get('strike')
 
     result = []
     today = date.today()

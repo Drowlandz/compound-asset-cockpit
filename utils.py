@@ -183,12 +183,16 @@ def get_stock_price_from_db(symbol, asset_category='STOCK', option_info=None):
     search_keys = []
     
     if asset_category == 'OPTION' and option_info:
-        # 构建期权代码: "AMZN 2026-02-07 CALL"
+        # 构建期权代码，优先包含 strike；保留旧键兼容
         expiration = option_info.get('expiration', '')
         option_type = option_info.get('option_type', '')
+        strike = option_info.get('strike', '')
         if expiration and option_type:
-            option_code = f"{symbol} {expiration} {option_type}"
-            search_keys.append((option_code, 'OPTION'))
+            option_code_with_strike = db.build_option_price_symbol(symbol, expiration, option_type, strike)
+            option_code_legacy = db.build_option_price_symbol(symbol, expiration, option_type)
+            search_keys.append((option_code_with_strike, 'OPTION'))
+            if option_code_legacy != option_code_with_strike:
+                search_keys.append((option_code_legacy, 'OPTION'))
     
     # 添加原始股票代码
     search_keys.append((symbol, asset_category))
@@ -211,6 +215,8 @@ def get_stock_price_from_db(symbol, asset_category='STOCK', option_info=None):
         # 优先返回期权价格
         if search_keys[0][0] in prices and prices[search_keys[0][0]] is not None:
             return prices[search_keys[0][0]]
+        if len(search_keys) > 1 and search_keys[1][0] in prices and prices[search_keys[1][0]] is not None:
+            return prices[search_keys[1][0]]
     
     return prices.get(symbol)
 
@@ -233,7 +239,8 @@ def update_portfolio_valuation(df):
         if row['Type'] == 'OPTION':
             option_info = {
                 'expiration': str(row.get('expiration', '')) if pd.notna(row.get('expiration')) else '',
-                'option_type': row.get('option_type', '') if pd.notna(row.get('option_type')) else ''
+                'option_type': row.get('option_type', '') if pd.notna(row.get('option_type')) else '',
+                'strike': row.get('strike', '') if pd.notna(row.get('strike')) else ''
             }
 
         # 1. 优先从 stock_prices 表获取价格
