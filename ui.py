@@ -2,6 +2,8 @@ import streamlit as st  # 🔥 必须加这行，用于显示调试信息
 from streamlit_echarts import st_echarts
 import pandas as pd
 import numpy as np      # 🔥 必须加这行，否则数学计算会报错
+import calendar
+from datetime import datetime, timedelta
 
 # 🔥 ECharts 3D 饼图 (支持隐私脱敏 mask_value)
 def render_echarts_pie(df, name_col, value_col, title_text="", key=None, mask_value=False):
@@ -222,3 +224,324 @@ def render_history_chart(history_df, mode='value', mask_value=False):
         }
 
     st_echarts(options=options, height="350px", key=f"chart_history_{mode}")
+
+
+def get_pnl_calendar_options(history_df):
+    """返回收益日历可用年份及默认年月。"""
+    now = datetime.now()
+    if history_df is None or history_df.empty:
+        return [now.year], now.year, now.month
+
+    df = history_df.copy()
+    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+    df = df.dropna(subset=['date']).sort_values('date')
+    if df.empty:
+        return [now.year], now.year, now.month
+
+    years = sorted(df['date'].dt.year.unique().tolist())
+    last_date = df['date'].max()
+    return years, int(last_date.year), int(last_date.month)
+
+
+def get_pnl_week_options(history_df, year=None):
+    """返回周视图可选周列表与默认周起始日(YYYY-MM-DD)。"""
+    daily_df = _prepare_daily_pnl(history_df)
+    now = datetime.now()
+    default_week_start = (now - timedelta(days=now.weekday())).strftime('%Y-%m-%d')
+    if daily_df.empty:
+        return [(default_week_start, f"W{now.isocalendar()[1]:02d} {now:%m/%d}-{(now + timedelta(days=6-now.weekday())):%m/%d}")], default_week_start
+
+    tmp = daily_df.copy()
+    tmp['week_start'] = tmp['date'].dt.normalize() - pd.to_timedelta(tmp['date'].dt.weekday, unit='D')
+    tmp['iso_year'] = tmp['date'].dt.isocalendar().year.astype(int)
+    tmp['iso_week'] = tmp['date'].dt.isocalendar().week.astype(int)
+
+    if year is not None:
+        filtered = tmp[tmp['iso_year'] == int(year)]
+        if not filtered.empty:
+            tmp = filtered
+
+    week_rows = (
+        tmp[['week_start', 'iso_year', 'iso_week']]
+        .drop_duplicates()
+        .sort_values('week_start')
+    )
+    options = []
+    for _, row in week_rows.iterrows():
+        start = pd.to_datetime(row['week_start']).to_pydatetime()
+        end = start + timedelta(days=6)
+        key = start.strftime('%Y-%m-%d')
+        label = f"W{int(row['iso_week']):02d} {start:%m/%d}-{end:%m/%d}"
+        options.append((key, label))
+
+    if not options:
+        return [(default_week_start, f"W{now.isocalendar()[1]:02d} {now:%m/%d}-{(now + timedelta(days=6-now.weekday())):%m/%d}")], default_week_start
+
+    return options, options[-1][0]
+
+
+def _prepare_daily_pnl(history_df):
+    if history_df is None or history_df.empty:
+        return pd.DataFrame()
+
+    df = history_df.copy()
+    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+    df['total_asset'] = pd.to_numeric(df['total_asset'], errors='coerce')
+    df = df.dropna(subset=['date', 'total_asset']).sort_values('date')
+    if df.empty:
+        return pd.DataFrame()
+
+    # daily_snapshots 按日期唯一，但这里仍按日期去重兜底
+    df = df.groupby(df['date'].dt.date, as_index=False).last()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date')
+
+    df['daily_amount'] = df['total_asset'].diff().fillna(0.0)
+    prev_asset = df['total_asset'].shift(1)
+    df['daily_rate'] = np.where(prev_asset > 0, (df['daily_amount'] / prev_asset) * 100.0, 0.0)
+    df['daily_rate'] = df['daily_rate'].replace([np.inf, -np.inf], 0).fillna(0.0)
+    df['day_key'] = df['date'].dt.strftime('%Y-%m-%d')
+    return df[['day_key', 'daily_amount', 'daily_rate', 'date']]
+
+
+def _prepare_monthly_pnl(daily_df):
+    if daily_df is None or daily_df.empty:
+        return pd.DataFrame({
+            'month': list(range(1, 13)),
+            'monthly_amount': [0.0] * 12,
+            'monthly_rate': [0.0] * 12
+        })
+
+    tmp = daily_df.copy()
+    tmp['month'] = tmp['date'].dt.month.astype(int)
+
+    amount_df = tmp.groupby('month', as_index=False).agg(
+        monthly_amount=('daily_amount', 'sum')
+    )
+    rate_df = tmp.groupby('month', as_index=False).agg(
+        monthly_rate=('daily_rate', lambda s: ((1 + (s / 100.0)).prod() - 1) * 100.0 if len(s) > 0 else 0.0)
+    )
+
+    merged = amount_df.merge(rate_df, on='month', how='outer').fillna(0.0)
+    full_months = pd.DataFrame({'month': list(range(1, 13))})
+    merged = full_months.merge(merged, on='month', how='left').fillna(0.0)
+    return merged.sort_values('month')
+
+
+def _fmt_amount(value, mask_value):
+    if mask_value:
+        return "****"
+    return f"{value:+,.2f}"
+
+
+def _fmt_rate(value):
+    return f"{value:+.2f}%"
+
+
+def _value_color(value):
+    if value > 0:
+        return "#16a34a"
+    if value < 0:
+        return "#dc2626"
+    return "#475569"
+
+
+def _cell_bg(value, max_abs):
+    if max_abs <= 0:
+        return "rgba(148, 163, 184, 0.08)"
+    ratio = min(abs(value) / max_abs, 1.0)
+    alpha = 0.10 + ratio * 0.30
+    if value > 0:
+        return f"rgba(34, 197, 94, {alpha:.2f})"
+    if value < 0:
+        return f"rgba(239, 68, 68, {alpha:.2f})"
+    return "rgba(148, 163, 184, 0.10)"
+
+
+def _render_month(year, month, daily_map, metric_mode, max_abs, mask_value=False):
+    month_name = f"{year}-{month:02d}"
+    cal = calendar.Calendar(firstweekday=0)
+    week_days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    today_date = datetime.now().date()
+
+    html_parts = [
+        '<div style="width:100%;margin:0 0 12px 0;border:1px solid #e2e8f0;'
+        'border-radius:10px;padding:10px;background:#ffffff;">'
+    ]
+    html_parts.append(
+        f'<div style="font-weight:700;font-size:14px;color:#1e293b;margin-bottom:8px;">{month_name}</div>'
+    )
+    html_parts.append('<div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;">')
+
+    for wd in week_days:
+        html_parts.append(
+            f'<div style="font-size:13px;font-weight:800;color:#334155;'
+            f'text-align:center;padding:6px 0;">{wd}</div>'
+        )
+
+    for week in cal.monthdatescalendar(year, month):
+        for day_obj in week:
+            if day_obj.month != month:
+                html_parts.append(
+                    '<div style="min-height:68px;border:1px solid #e2e8f0;border-radius:14px;'
+                    'background:#f8fafc;"></div>'
+                )
+                continue
+
+            day_key = day_obj.strftime('%Y-%m-%d')
+            item = daily_map.get(day_key)
+            if item is None:
+                value = 0.0
+                display_val = "--" if day_obj <= today_date else ""
+            else:
+                value = item['daily_amount'] if metric_mode == 'amount' else item['daily_rate']
+                display_val = _fmt_amount(value, mask_value) if metric_mode == 'amount' else _fmt_rate(value)
+
+            bg = _cell_bg(value, max_abs)
+            value_color = _value_color(value)
+            html_parts.append(
+                f'<div style="min-height:68px;border:1px solid #e2e8f0;border-radius:14px;'
+                f'padding:8px 6px;background:{bg};display:flex;flex-direction:column;'
+                'align-items:center;justify-content:center;gap:8px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.35);">'
+                f'<div style="font-size:15px;font-weight:800;color:#1e293b;line-height:1;text-align:center;">{day_obj.day:02d}</div>'
+                f'<div style="font-size:12px;font-weight:400;color:{value_color};line-height:1.15;text-align:center;">{display_val}</div>'
+                '</div>'
+            )
+
+    html_parts.append('</div></div>')
+    st.markdown("".join(html_parts), unsafe_allow_html=True)
+
+
+def _render_week(week_start, daily_map, metric_mode, max_abs, mask_value=False):
+    start = pd.to_datetime(week_start).to_pydatetime()
+    end = start + timedelta(days=6)
+    week_days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    today_date = datetime.now().date()
+
+    html_parts = [
+        '<div style="width:100%;margin:0 0 12px 0;border:1px solid #e2e8f0;'
+        'border-radius:10px;padding:10px;background:#ffffff;">'
+    ]
+    html_parts.append(
+        f'<div style="font-weight:700;font-size:14px;color:#1e293b;margin-bottom:8px;">'
+        f'Week {start:%Y-%m-%d} ~ {end:%Y-%m-%d}</div>'
+    )
+    html_parts.append('<div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;">')
+
+    for wd in week_days:
+        html_parts.append(
+            f'<div style="font-size:12px;font-weight:800;color:#334155;'
+            f'text-align:center;padding:4px 0;">{wd}</div>'
+        )
+
+    for i in range(7):
+        day_obj = start + timedelta(days=i)
+        day_key = day_obj.strftime('%Y-%m-%d')
+        item = daily_map.get(day_key)
+        if item is None:
+            value = 0.0
+            display_val = "--" if day_obj.date() <= today_date else ""
+        else:
+            value = item['daily_amount'] if metric_mode == 'amount' else item['daily_rate']
+            display_val = _fmt_amount(value, mask_value) if metric_mode == 'amount' else _fmt_rate(value)
+
+        bg = _cell_bg(value, max_abs)
+        value_color = _value_color(value)
+        html_parts.append(
+            f'<div style="min-height:56px;border:1px solid #e2e8f0;border-radius:12px;'
+            f'padding:6px 4px;background:{bg};display:flex;flex-direction:column;'
+            'align-items:center;justify-content:center;gap:6px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.35);">'
+            f'<div style="font-size:13px;font-weight:800;color:#1e293b;line-height:1;text-align:center;">{day_obj.day:02d}</div>'
+            f'<div style="font-size:11px;font-weight:400;color:{value_color};line-height:1.15;text-align:center;">{display_val}</div>'
+            '</div>'
+        )
+
+    html_parts.append('</div></div>')
+    st.markdown("".join(html_parts), unsafe_allow_html=True)
+
+
+def _render_year_cards(year, monthly_df, metric_mode, mask_value=False):
+    monthly_map = {}
+    for _, row in monthly_df.iterrows():
+        monthly_map[int(row['month'])] = {
+            'monthly_amount': float(row['monthly_amount']),
+            'monthly_rate': float(row['monthly_rate'])
+        }
+
+    metric_key = 'monthly_amount' if metric_mode == 'amount' else 'monthly_rate'
+    values = [monthly_map.get(m, {metric_key: 0.0})[metric_key] for m in range(1, 13)]
+    max_abs = float(max(abs(v) for v in values)) if values else 0.0
+
+    html_parts = [
+        '<div style="width:100%;margin:0 0 12px 0;">'
+        '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;">'
+    ]
+
+    for month in range(1, 13):
+        item = monthly_map.get(month, {'monthly_amount': 0.0, 'monthly_rate': 0.0})
+        value = item['monthly_amount'] if metric_mode == 'amount' else item['monthly_rate']
+        display_val = _fmt_amount(value, mask_value) if metric_mode == 'amount' else _fmt_rate(value)
+        bg = _cell_bg(value, max_abs)
+        value_color = _value_color(value)
+        html_parts.append(
+            f'<div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px 14px;'
+            f'background:{bg};">'
+            f'<div style="font-size:13px;color:#334155;margin-bottom:8px;">{year}-{month:02d}</div>'
+            f'<div style="font-size:16px;font-weight:400;color:{value_color};">{display_val}</div>'
+            '</div>'
+        )
+
+    html_parts.append('</div></div>')
+    st.markdown("".join(html_parts), unsafe_allow_html=True)
+
+
+def render_pnl_calendar(history_df, view_mode='month', metric_mode='amount', year=None, month=None, week_start=None, mask_value=False):
+    """
+    收益日历：
+    - view_mode: month/year
+    - metric_mode: amount/rate
+    """
+    daily_df = _prepare_daily_pnl(history_df)
+    if daily_df.empty:
+        st.info("暂无快照数据，收益日历暂不可用。")
+        return
+
+    daily_map = {
+        row['day_key']: {'daily_amount': float(row['daily_amount']), 'daily_rate': float(row['daily_rate'])}
+        for _, row in daily_df.iterrows()
+    }
+
+    if view_mode == 'week':
+        if week_start is None:
+            week_options, default_week = get_pnl_week_options(history_df, year)
+            week_start = default_week if week_options else datetime.now().strftime('%Y-%m-%d')
+        week_days = pd.date_range(start=week_start, periods=7, freq='D')
+        metric_key = 'daily_amount' if metric_mode == 'amount' else 'daily_rate'
+        values = []
+        for d in week_days:
+            item = daily_map.get(d.strftime('%Y-%m-%d'))
+            values.append(float(item[metric_key]) if item else 0.0)
+        max_abs = float(max(abs(v) for v in values)) if values else 0.0
+        _render_week(week_start, daily_map, metric_mode, max_abs=max_abs, mask_value=mask_value)
+        return
+
+    if year is None:
+        year = int(daily_df['date'].dt.year.max())
+
+    year_df = daily_df[daily_df['date'].dt.year == year]
+    if year_df.empty:
+        st.info("该年份暂无快照数据。")
+        return
+
+    if view_mode == 'month':
+        if month is None:
+            month = int(year_df['date'].dt.month.max())
+
+        scoped = year_df[year_df['date'].dt.month == month]
+        metric_col = 'daily_amount' if metric_mode == 'amount' else 'daily_rate'
+        max_abs = float(scoped[metric_col].abs().max()) if not scoped.empty else 0.0
+        _render_month(year, month, daily_map, metric_mode, max_abs=max_abs, mask_value=mask_value)
+        return
+
+    monthly_df = _prepare_monthly_pnl(year_df)
+    _render_year_cards(year, monthly_df, metric_mode, mask_value=mask_value)
