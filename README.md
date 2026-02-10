@@ -1,4 +1,4 @@
-# 🔭 长期主义资产驾驶舱 (Long-Termism Asset Cockpit)
+# 🔭 长期复利资产驾驶舱 (Compound Asset Cockpit)
 
 > **"流水不争先，争的是滔滔不绝。"**
 
@@ -144,6 +144,39 @@ python3 view_db.py --quick
 # 关闭所有 Streamlit 进程
 python3 kill_streamlit.py
 ```
+
+### daily_refresh.py - 离线自动日更
+
+```bash
+# 手动执行一次（刷新宏观/股价并写入当日净资产快照）
+python3 daily_refresh.py
+
+# 只写快照，不刷新宏观和股价
+python3 daily_refresh.py --no-macro --no-price
+
+# 指定日期默认会被拒绝（避免伪造历史），仅限人工纠错时显式放开
+python3 daily_refresh.py --date 2026-02-10 --allow-historical-snapshot
+```
+
+> 说明：这个脚本不依赖打开 Streamlit 页面，适合定时任务运行；默认只写“当天快照”。
+
+### macOS 定时任务（launchd）
+
+```bash
+# 可选：先给脚本执行权限
+chmod +x scripts/install_daily_refresh_launchd.sh
+
+# 默认每天 20:30 自动执行
+./scripts/install_daily_refresh_launchd.sh
+
+# 自定义执行时间（示例：每天 18:05）
+RUN_HOUR=18 RUN_MINUTE=5 ./scripts/install_daily_refresh_launchd.sh
+```
+
+安装后会自动生成：
+
+- `~/Library/LaunchAgents/com.rowland.im.daily_refresh.plist`
+- 日志文件：`logs/daily_refresh.out.log`、`logs/daily_refresh.err.log`
 
 ## 💾 数据库结构
 
