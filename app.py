@@ -968,6 +968,10 @@ with cal_c:
     cal_c1, cal_c2, cal_c3, cal_c4 = st.columns([1.2, 1.2, 1.0, 1.0])
     if st.session_state.get("pnl_calendar_view") not in [None, "月", "年"]:
         st.session_state["pnl_calendar_view"] = "月"
+    if "pnl_calendar_metric" not in st.session_state:
+        st.session_state["pnl_calendar_metric"] = "%"
+    elif st.session_state.get("pnl_calendar_metric") not in ["$", "%"]:
+        st.session_state["pnl_calendar_metric"] = "%"
     with cal_c1:
         cal_view = st.radio(
             "日历视图",
@@ -979,7 +983,7 @@ with cal_c:
     with cal_c2:
         cal_metric = st.radio(
             "收益维度",
-            ["收益额", "收益率"],
+            ["$", "%"],
             horizontal=True,
             label_visibility="collapsed",
             key="pnl_calendar_metric"
@@ -1012,7 +1016,7 @@ with cal_c:
     ui.render_pnl_calendar(
         history_df=history_df,
         view_mode='month' if cal_view == "月" else 'year',
-        metric_mode='amount' if cal_metric == "收益额" else 'rate',
+        metric_mode='amount' if cal_metric == "$" else 'rate',
         year=selected_year,
         month=selected_month if cal_view == "月" else None,
         mask_value=privacy_mode
