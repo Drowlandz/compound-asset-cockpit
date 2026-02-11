@@ -78,7 +78,10 @@ CUSTOM_CSS = """
         animation: breathe 4s infinite ease-in-out;
         transition: transform 0.3s;
     }
-    .badge-container:hover { transform: translateY(-2px) scale(1.05); }
+    .badge-container:hover {
+        animation: none;
+        transform: translateY(-2px) scale(1.05);
+    }
     .badge-icon { font-size: 28px; filter: drop-shadow(0 2px 2px rgba(0,0,0,0.1)); }
     .badge-text { font-family: 'Segoe UI', sans-serif; font-weight: 800; color: #854d0e; font-size: 15px; line-height: 1.1; }
     .badge-label { font-size: 11px; color: #a16207; font-weight: 500; margin-top: 2px; }

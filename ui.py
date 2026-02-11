@@ -78,8 +78,8 @@ def render_echarts_pie(df, name_col, value_col, title_text="", key=None, mask_va
     st_echarts(options=options, height="280px", key=key)
 
 
-# 🔥 历史曲线图 (支持隐私脱敏 mask_value)
-def render_history_chart(history_df, mode='value', mask_value=False):
+# 🔥 历史曲线图 (支持隐私脱敏 mask_value + 夜间主题)
+def render_history_chart(history_df, mode='value', mask_value=False, dark_mode=False):
     """
     稳健版：移除复杂特效，强制显示数据点。
     增加 mask_value 逻辑：隐藏金额数值。
@@ -102,6 +102,18 @@ def render_history_chart(history_df, mode='value', mask_value=False):
     except Exception:
         return
 
+    axis_color = "#94a3b8" if not dark_mode else "#a7b0c0"
+    split_color = "#f1f5f9" if not dark_mode else "rgba(148, 163, 184, 0.20)"
+    tooltip_bg = "rgba(255,255,255,0.95)" if not dark_mode else "rgba(15, 23, 42, 0.96)"
+    tooltip_text = "#333" if not dark_mode else "#e2e8f0"
+    legend_text = "#475569" if not dark_mode else "#cbd5e1"
+    asset_line = "#16a34a" if not dark_mode else "#22c55e"
+    principal_line = "#94a3b8" if not dark_mode else "#64748b"
+    pct_line = "#ea580c" if not dark_mode else "#f59e0b"
+    pct_area = "#ea580c" if not dark_mode else "#f59e0b"
+    pct_area_opacity = 0.1 if not dark_mode else 0.22
+    zero_line = "#64748b" if not dark_mode else "#94a3b8"
+
     options = {}
 
     # ================= 模式 A: 资产绝对值 ($) =================
@@ -122,11 +134,11 @@ def render_history_chart(history_df, mode='value', mask_value=False):
         options = {
             "tooltip": {
                 "trigger": 'axis',
-                "backgroundColor": "rgba(255,255,255,0.95)",
-                "textStyle": {"color": "#333"},
-                "formatter": tooltip_fmt  # 应用格式
+                "backgroundColor": tooltip_bg,
+                "textStyle": {"color": tooltip_text},
+                "formatter": tooltip_fmt
             },
-            "legend": {"data": ["净资产", "总本金"], "top": "0%"},
+            "legend": {"data": ["净资产", "总本金"], "top": "0%", "textStyle": {"color": legend_text}},
             "grid": {"top": "15%", "left": "2%", "right": "4%", "bottom": "5%", "containLabel": True},
             "xAxis": {
                 "type": 'category',
@@ -134,13 +146,13 @@ def render_history_chart(history_df, mode='value', mask_value=False):
                 "data": dates,
                 "axisLine": {"show": False},
                 "axisTick": {"show": False},
-                "axisLabel": {"color": "#94a3b8"}
+                "axisLabel": {"color": axis_color}
             },
             "yAxis": {
                 "type": 'value',
                 "scale": True,
-                "splitLine": {"lineStyle": {"type": "dashed", "color": "#f1f5f9"}},
-                "axisLabel": {"formatter": y_axis_label, "color": "#94a3b8"} # 应用脱敏标签
+                "splitLine": {"lineStyle": {"type": "dashed", "color": split_color}},
+                "axisLabel": {"formatter": y_axis_label, "color": axis_color}
             },
             "series": [
                 {
@@ -149,8 +161,8 @@ def render_history_chart(history_df, mode='value', mask_value=False):
                     "smooth": 0.2,
                     "showSymbol": True,
                     "symbolSize": 6,
-                    "lineStyle": {"width": 3, "color": "#16a34a"},
-                    "itemStyle": {"color": "#16a34a"},
+                    "lineStyle": {"width": 3, "color": asset_line},
+                    "itemStyle": {"color": asset_line},
                     "data": assets
                 },
                 {
@@ -158,8 +170,8 @@ def render_history_chart(history_df, mode='value', mask_value=False):
                     "type": "line",
                     "smooth": 0.2,
                     "showSymbol": False,
-                    "lineStyle": {"width": 2, "color": "#94a3b8", "type": "dashed"},
-                    "itemStyle": {"color": "#94a3b8"},
+                    "lineStyle": {"width": 2, "color": principal_line, "type": "dashed"},
+                    "itemStyle": {"color": principal_line},
                     "data": principals
                 }
             ]
@@ -185,8 +197,8 @@ def render_history_chart(history_df, mode='value', mask_value=False):
         options = {
             "tooltip": {
                 "trigger": 'axis',
-                "backgroundColor": "rgba(255,255,255,0.95)",
-                "textStyle": {"color": "#333"},
+                "backgroundColor": tooltip_bg,
+                "textStyle": {"color": tooltip_text},
                 "formatter": "<b>📅 {b}</b><br/>🚀 累计收益: <b>{c}%</b>"
             },
             "grid": {"top": "15%", "left": "2%", "right": "4%", "bottom": "5%", "containLabel": True},
@@ -196,13 +208,13 @@ def render_history_chart(history_df, mode='value', mask_value=False):
                 "data": dates,
                 "axisLine": {"show": False},
                 "axisTick": {"show": False},
-                "axisLabel": {"color": "#94a3b8"}
+                "axisLabel": {"color": axis_color}
             },
             "yAxis": {
                 "type": 'value',
                 "scale": True,
-                "splitLine": {"lineStyle": {"type": "dashed", "color": "#f1f5f9"}},
-                "axisLabel": {"formatter": "{value}%", "color": "#94a3b8"}
+                "splitLine": {"lineStyle": {"type": "dashed", "color": split_color}},
+                "axisLabel": {"formatter": "{value}%", "color": axis_color}
             },
             "series": [{
                 "name": '累计收益率',
@@ -210,23 +222,27 @@ def render_history_chart(history_df, mode='value', mask_value=False):
                 "smooth": 0.2,
                 "showSymbol": True,
                 "symbolSize": 6,
-                "lineStyle": {"width": 3, "color": "#ea580c"},
-                "itemStyle": {"color": "#ea580c"},
+                "lineStyle": {"width": 3, "color": pct_line},
+                "itemStyle": {"color": pct_line},
                 "markLine": {
                     "symbol": "none",
                     "data": [{"yAxis": 0}],
-                    "label": {"show": True, "position": "end", "formatter": "0%", "color": "#94a3b8"},
-                    "lineStyle": {"color": "#64748b", "type": "solid", "width": 1}
+                    "label": {"show": True, "position": "end", "formatter": "0%", "color": axis_color},
+                    "lineStyle": {"color": zero_line, "type": "solid", "width": 1}
                 },
                 "areaStyle": {
-                    "opacity": 0.1,
-                    "color": "#ea580c"
+                    "opacity": pct_area_opacity,
+                    "color": pct_area
                 },
                 "data": yields
             }]
         }
 
-    st_echarts(options=options, height="350px", key=f"chart_history_{mode}")
+    st_echarts(
+        options=options,
+        height="350px",
+        key=f"chart_history_{mode}_{'dark' if dark_mode else 'light'}"
+    )
 
 
 def get_pnl_calendar_options(history_df):

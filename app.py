@@ -322,35 +322,51 @@ def show_donation_dialog():
                 st.image(str(path), use_container_width=True)
 
 
-def render_donation_section():
+def render_donation_section(dark_mode=False):
+    if dark_mode:
+        card_border = "#b45309"
+        card_bg = "linear-gradient(135deg, #2a1b0f 0%, #3a220e 100%)"
+        card_color = "#fef3c7"
+        card_shadow = "0 10px 24px rgba(2, 6, 23, 0.32)"
+        card_border_hover = "#f59e0b"
+        card_shadow_hover = "0 16px 32px rgba(2, 6, 23, 0.48)"
+        card_focus = "0 0 0 3px rgba(245, 158, 11, 0.35), 0 10px 24px rgba(2, 6, 23, 0.36)"
+    else:
+        card_border = "#fdba74"
+        card_bg = "linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)"
+        card_color = "#7c2d12"
+        card_shadow = "0 10px 24px rgba(15, 23, 42, 0.08)"
+        card_border_hover = "#fb923c"
+        card_shadow_hover = "0 16px 32px rgba(15, 23, 42, 0.14)"
+        card_focus = "0 0 0 3px rgba(251, 146, 60, 0.25), 0 10px 24px rgba(15, 23, 42, 0.08)"
+
     st.divider()
-    st.markdown(
-        """
+    donate_css = """
         <style>
         .st-key-donate_card_area div[data-testid="stButton"] > button {
             width: 100%;
             min-height: 92px;
             border-radius: 16px;
-            border: 1px solid #fdba74;
-            background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
-            color: #7c2d12;
+            border: 1px solid __BORDER__;
+            background: __BG__;
+            color: __COLOR__;
             font-weight: 800;
             font-size: 18px;
             letter-spacing: 0.2px;
             line-height: 1.35;
             white-space: pre-line;
-            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+            box-shadow: __SHADOW__;
             transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
         }
         .st-key-donate_card_area div[data-testid="stButton"] > button:hover {
             transform: translateY(-2px) scale(1.01);
-            box-shadow: 0 16px 32px rgba(15, 23, 42, 0.14);
+            box-shadow: __SHADOW_HOVER__;
             filter: saturate(1.05);
-            border-color: #fb923c;
+            border-color: __BORDER_HOVER__;
         }
         .st-key-donate_card_area div[data-testid="stButton"] > button:focus {
             outline: none;
-            box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.25), 0 10px 24px rgba(15, 23, 42, 0.08);
+            box-shadow: __FOCUS_SHADOW__;
         }
         @media (max-width: 768px) {
             .st-key-donate_card_area div[data-testid="stButton"] > button {
@@ -359,7 +375,16 @@ def render_donation_section():
             }
         }
         </style>
-        """,
+    """
+    st.markdown(
+        donate_css
+        .replace("__BORDER__", card_border)
+        .replace("__BG__", card_bg)
+        .replace("__COLOR__", card_color)
+        .replace("__SHADOW__", card_shadow)
+        .replace("__SHADOW_HOVER__", card_shadow_hover)
+        .replace("__BORDER_HOVER__", card_border_hover)
+        .replace("__FOCUS_SHADOW__", card_focus),
         unsafe_allow_html=True,
     )
 
@@ -1343,6 +1368,11 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
 st.divider()
 
 # --- 5. 财富复利曲线 (极简版) ---
+if "chart_mode_toggle" not in st.session_state:
+    st.session_state["chart_mode_toggle"] = "%"
+elif st.session_state.get("chart_mode_toggle") not in ["$", "%"]:
+    st.session_state["chart_mode_toggle"] = "%"
+
 col_h1, col_h2 = st.columns([1, 4])
 with col_h1:
     st.caption("📈 财富复利曲线")
@@ -1370,7 +1400,12 @@ history_df = db.get_history_data()
 # st.dataframe(history_df, use_container_width=True)
 # # 🔥🔥🔥 【诊断探针】结束 🔥🔥🔥
 
-ui.render_history_chart(history_df, mode=mode_key, mask_value=privacy_mode)
+ui.render_history_chart(
+    history_df,
+    mode=mode_key,
+    mask_value=privacy_mode,
+    dark_mode=dark_mode
+)
 
 st.divider()
 
@@ -1527,7 +1562,7 @@ with cal_left:
     st.caption(f"统计截止：{anchor_date:%Y-%m-%d}")
 
 # --- 7. 打赏支持 ---
-render_donation_section()
+render_donation_section(dark_mode=dark_mode)
 
 # 底部悬浮按钮
 st.markdown('<span id="fab-anchor"></span>', unsafe_allow_html=True)
