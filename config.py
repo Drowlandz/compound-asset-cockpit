@@ -78,7 +78,7 @@ CUSTOM_CSS = """
         animation: breathe 4s infinite ease-in-out;
         transition: transform 0.3s;
     }
-    .badge-container:hover { transform: translateY(-2px); }
+    .badge-container:hover { transform: translateY(-2px) scale(1.05); }
     .badge-icon { font-size: 28px; filter: drop-shadow(0 2px 2px rgba(0,0,0,0.1)); }
     .badge-text { font-family: 'Segoe UI', sans-serif; font-weight: 800; color: #854d0e; font-size: 15px; line-height: 1.1; }
     .badge-label { font-size: 11px; color: #a16207; font-weight: 500; margin-top: 2px; }
@@ -111,6 +111,22 @@ CUSTOM_CSS = """
         box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 10px 10px -5px rgba(0, 0, 0, 0.01);
         border-color: #cbd5e1;
     }
+    /* 健康/风险状态悬浮边框 */
+    .st-key-lev_metric_ok div[data-testid="stMetric"]:hover,
+    .st-key-conc_metric_ok div[data-testid="stMetric"]:hover,
+    .st-key-cash_metric_wrap div[data-testid="stMetric"]:hover,
+    .st-key-cash_flat_metric_wrap div[data-testid="stMetric"]:hover,
+    .st-key-profit_metric_ok div[data-testid="stMetric"]:hover {
+        border-color: #16a34a;
+        box-shadow: 0 20px 25px -5px rgba(22, 163, 74, 0.22), 0 10px 10px -5px rgba(22, 163, 74, 0.12);
+    }
+    .st-key-lev_metric_bad div[data-testid="stMetric"]:hover,
+    .st-key-conc_metric_bad div[data-testid="stMetric"]:hover,
+    .st-key-debt_metric_wrap div[data-testid="stMetric"]:hover,
+    .st-key-profit_metric_bad div[data-testid="stMetric"]:hover {
+        border-color: #dc2626;
+        box-shadow: 0 20px 25px -5px rgba(220, 38, 38, 0.24), 0 10px 10px -5px rgba(220, 38, 38, 0.12);
+    }
     div[data-testid="column"]:nth-child(1) div[data-testid="stMetric"] label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; }
 
     /* 净资产卡片 (极光绿渐变) */
@@ -125,6 +141,48 @@ CUSTOM_CSS = """
         background: linear-gradient(120deg, #ffffff 0%, #eff6ff 100%);
         border: 1px solid #bfdbfe;
         border-left: 6px solid #2563eb;
+    }
+
+    /* 现金/负债状态卡片 */
+    div.cash-asset-card div[data-testid="stMetric"] {
+        background: linear-gradient(120deg, #ffffff 0%, #ecfdf5 100%);
+        border: 1px solid #bbf7d0;
+        border-left: 6px solid #16a34a;
+    }
+    div.debt-asset-card div[data-testid="stMetric"] {
+        background: linear-gradient(120deg, #ffffff 0%, #fef2f2 100%);
+        border: 1px solid #fecaca;
+        border-left: 6px solid #dc2626;
+    }
+    div.cash-flat-card div[data-testid="stMetric"] {
+        background: linear-gradient(120deg, #ffffff 0%, #f8fafc 100%);
+        border: 1px solid #e2e8f0;
+        border-left: 6px solid #64748b;
+    }
+    .st-key-cash_metric_wrap div[data-testid="stMetric"] {
+        background: linear-gradient(120deg, #ffffff 0%, #ecfdf5 100%);
+        border: 1px solid #bbf7d0;
+        border-left: 6px solid #16a34a;
+    }
+    .st-key-debt_metric_low_wrap div[data-testid="stMetric"] {
+        background: linear-gradient(120deg, #ffffff 0%, #fff7ed 100%);
+        border: 1px solid #fed7aa;
+        border-left: 6px solid #f59e0b;
+    }
+    .st-key-debt_metric_mid_wrap div[data-testid="stMetric"] {
+        background: linear-gradient(120deg, #ffffff 0%, #ffedd5 100%);
+        border: 1px solid #fdba74;
+        border-left: 6px solid #f97316;
+    }
+    .st-key-debt_metric_high_wrap div[data-testid="stMetric"] {
+        background: linear-gradient(120deg, #ffffff 0%, #fef2f2 100%);
+        border: 1px solid #fecaca;
+        border-left: 6px solid #dc2626;
+    }
+    .st-key-cash_flat_metric_wrap div[data-testid="stMetric"] {
+        background: linear-gradient(120deg, #ffffff 0%, #f8fafc 100%);
+        border: 1px solid #e2e8f0;
+        border-left: 6px solid #64748b;
     }
 
     /* 悬浮按钮（仅绑定 fab 容器，避免误伤其他按钮） */

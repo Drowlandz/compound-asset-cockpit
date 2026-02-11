@@ -29,33 +29,50 @@ def _parse_bool_flag(raw_value):
     return None
 
 
-def _get_privacy_mode_from_query():
+def _get_query_flag(flag_name):
     try:
-        return _parse_bool_flag(st.query_params.get("privacy"))
+        return _parse_bool_flag(st.query_params.get(flag_name))
     except Exception:
         pass
     try:
         params = st.experimental_get_query_params()
-        return _parse_bool_flag(params.get("privacy"))
+        return _parse_bool_flag(params.get(flag_name))
     except Exception:
         return None
 
 
-def _sync_privacy_mode_to_query(enabled):
-    target = "1" if enabled else "0"
+def _get_privacy_mode_from_query():
+    return _get_query_flag("privacy")
+
+
+def _get_dark_mode_from_query():
+    return _get_query_flag("dark")
+
+
+def _sync_modes_to_query(privacy_enabled, dark_enabled):
+    target_privacy = "1" if privacy_enabled else "0"
+    target_dark = "1" if dark_enabled else "0"
+
+    # 优先一次性写入，避免两个开关分别写 query 导致切换抖动
     try:
-        current = str(st.query_params.get("privacy"))
-        if current != target:
-            st.query_params["privacy"] = target
+        params = st.experimental_get_query_params()
+        current_privacy = _parse_bool_flag(params.get("privacy"))
+        current_dark = _parse_bool_flag(params.get("dark"))
+        if current_privacy == bool(privacy_enabled) and current_dark == bool(dark_enabled):
+            return
+        params["privacy"] = [target_privacy]
+        params["dark"] = [target_dark]
+        st.experimental_set_query_params(**params)
         return
     except Exception:
         pass
     try:
-        params = st.experimental_get_query_params()
-        current = params.get("privacy", [None])[0]
-        if current != target:
-            params["privacy"] = [target]
-            st.experimental_set_query_params(**params)
+        current_privacy = _parse_bool_flag(st.query_params.get("privacy"))
+        current_dark = _parse_bool_flag(st.query_params.get("dark"))
+        if current_privacy != bool(privacy_enabled):
+            st.query_params["privacy"] = target_privacy
+        if current_dark != bool(dark_enabled):
+            st.query_params["dark"] = target_dark
     except Exception:
         pass
 
@@ -70,9 +87,154 @@ if query_privacy is not None and query_privacy != last_query_privacy:
     st.session_state['privacy_mode'] = bool(query_privacy)
 st.session_state['_last_query_privacy'] = query_privacy
 
+query_dark = _get_dark_mode_from_query()
+if 'dark_mode' not in st.session_state:
+    st.session_state['dark_mode'] = bool(query_dark) if query_dark is not None else False
+
+last_query_dark = st.session_state.get('_last_query_dark')
+if query_dark is not None and query_dark != last_query_dark:
+    st.session_state['dark_mode'] = bool(query_dark)
+st.session_state['_last_query_dark'] = query_dark
+
 
 def is_privacy_mode():
     return bool(st.session_state.get('privacy_mode', False))
+
+
+def is_dark_mode():
+    return bool(st.session_state.get('dark_mode', False))
+
+
+def render_runtime_theme_css():
+    if not is_dark_mode():
+        return
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background: radial-gradient(circle at 12% 10%, #1f2937 0%, #0b0f14 40%, #05080d 100%);
+            color: #e5e7eb;
+        }
+        .main .block-container {
+            background: transparent;
+        }
+        h1, h2, h3, h4, h5, h6, p, span, label {
+            color: #e5e7eb;
+        }
+        .quote-card {
+            background: linear-gradient(120deg, #111827 0%, #0f172a 100%);
+            border-left-color: #38bdf8;
+            color: #e2e8f0;
+            box-shadow: 0 10px 24px rgba(2, 6, 23, 0.45);
+        }
+        .quote-author {
+            color: #94a3b8;
+        }
+        .badge-container {
+            background: rgba(15, 23, 42, 0.92);
+            border-color: #facc15;
+            box-shadow: 0 10px 25px rgba(2, 6, 23, 0.55);
+        }
+        div[data-testid="stMetric"] {
+            background: linear-gradient(130deg, #111827 0%, #0f172a 100%);
+            border-color: #334155;
+            box-shadow: 0 10px 24px rgba(2, 6, 23, 0.4);
+        }
+        div[data-testid="stMetric"] label {
+            color: #94a3b8 !important;
+        }
+        div[data-testid="stMetricValue"] {
+            color: #f8fafc !important;
+        }
+        div[data-testid="stMetricDelta"] > div {
+            color: #cbd5e1 !important;
+        }
+        div[data-testid="stMetricDelta"] svg {
+            fill: #94a3b8 !important;
+        }
+        div.net-asset-card div[data-testid="stMetric"] {
+            background: linear-gradient(130deg, #0b3022 0%, #0f3f2f 100%) !important;
+            border-color: #166534 !important;
+            border-left: 6px solid #22c55e !important;
+        }
+        div.holding-asset-card div[data-testid="stMetric"] {
+            background: linear-gradient(130deg, #0b223f 0%, #0f2f54 100%) !important;
+            border-color: #1d4ed8 !important;
+            border-left: 6px solid #3b82f6 !important;
+        }
+        .st-key-lev_metric_ok div[data-testid="stMetric"],
+        .st-key-conc_metric_ok div[data-testid="stMetric"],
+        .st-key-profit_metric_ok div[data-testid="stMetric"] {
+            background: linear-gradient(130deg, #0f2a20 0%, #133428 100%) !important;
+            border-color: #166534 !important;
+            border-left: 6px solid #16a34a !important;
+        }
+        .st-key-lev_metric_bad div[data-testid="stMetric"],
+        .st-key-conc_metric_bad div[data-testid="stMetric"],
+        .st-key-profit_metric_bad div[data-testid="stMetric"] {
+            background: linear-gradient(130deg, #3b1013 0%, #451417 100%) !important;
+            border-color: #991b1b !important;
+            border-left: 6px solid #ef4444 !important;
+        }
+        .st-key-cash_metric_wrap div[data-testid="stMetric"] {
+            background: linear-gradient(130deg, #0f2a20 0%, #133428 100%) !important;
+            border-color: #166534 !important;
+            border-left: 6px solid #22c55e !important;
+        }
+        .st-key-debt_metric_low_wrap div[data-testid="stMetric"] {
+            background: linear-gradient(130deg, #2f2611 0%, #3a2d12 100%) !important;
+            border-color: #a16207 !important;
+            border-left: 6px solid #f59e0b !important;
+        }
+        .st-key-debt_metric_mid_wrap div[data-testid="stMetric"] {
+            background: linear-gradient(130deg, #3a1d12 0%, #4a1f14 100%) !important;
+            border-color: #c2410c !important;
+            border-left: 6px solid #f97316 !important;
+        }
+        .st-key-debt_metric_high_wrap div[data-testid="stMetric"] {
+            background: linear-gradient(130deg, #3b1013 0%, #451417 100%) !important;
+            border-color: #991b1b !important;
+            border-left: 6px solid #ef4444 !important;
+        }
+        .st-key-cash_flat_metric_wrap div[data-testid="stMetric"] {
+            background: linear-gradient(130deg, #111827 0%, #0f172a 100%) !important;
+            border-color: #475569 !important;
+            border-left: 6px solid #64748b !important;
+        }
+        div[data-testid="stRadio"] > div[role="radiogroup"] {
+            background-color: #0f172a;
+            border: 1px solid #334155;
+        }
+        div[data-testid="stRadio"] label[data-baseweb="radio"] > div {
+            color: #94a3b8;
+        }
+        div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) {
+            background-color: #1e293b;
+            box-shadow: none;
+        }
+        div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) > div {
+            color: #f8fafc !important;
+        }
+        div[data-testid="stDataFrame"],
+        div[data-testid="stTable"] {
+            border: 1px solid #334155;
+            border-radius: 12px;
+            background: #0f172a;
+        }
+        div[data-testid="stExpander"] {
+            border-color: #334155 !important;
+            background: #0f172a !important;
+        }
+        div[data-testid="stExpander"] details summary p {
+            color: #cbd5e1 !important;
+        }
+        hr {
+            border-color: #334155 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
 
 def fmt_money(value, decimals=0):
@@ -202,7 +364,7 @@ def render_donation_section():
     )
 
     with st.container(key="donate_card_area"):
-        card_text = "☕ 这个工具帮到你了吗？请我喝杯咖啡吧\n点击查看收款码"
+        card_text = "☕ 这个工具帮到你了吗？请我喝杯咖啡吧"
         if st.button(card_text, key="donate_card_trigger", use_container_width=True):
             show_donation_dialog()
 
@@ -661,17 +823,21 @@ st.subheader("🔭 长期复利资产驾驶舱")
 
 # --- 2. 宏观模块 ---
 macro_data = ut.get_global_macro_data()
-col_switch, col_privacy, _ = st.columns([1, 1, 3])
+col_switch, col_privacy, col_dark, _ = st.columns([1, 1, 1, 2])
 with col_switch:
     market_mode = st.radio("Market View", ["US", "CN"], horizontal=True, label_visibility="collapsed")
 with col_privacy:
     st.toggle("隐私模式", key="privacy_mode", help="开启后隐藏所有金额")
+with col_dark:
+    st.toggle("夜间模式", key="dark_mode", help="开启后切换黑色主题")
 privacy_mode = is_privacy_mode()
-_sync_privacy_mode_to_query(privacy_mode)
+dark_mode = is_dark_mode()
+_sync_modes_to_query(privacy_mode, dark_mode)
+render_runtime_theme_css()
 
 if privacy_mode:
-    st.markdown(
-        """
+    dark_target = "1" if dark_mode else "0"
+    privacy_html = """
         <style>
         .privacy-fab-left {
             position: fixed;
@@ -727,10 +893,86 @@ if privacy_mode:
         <div class="privacy-fab-left">
             <form method="get" action="">
                 <input type="hidden" name="privacy" value="0" />
+                <input type="hidden" name="dark" value="__DARK_TARGET__" />
                 <button type="submit" title="点击关闭隐私模式">🙈 隐私中</button>
             </form>
         </div>
-        """,
+    """
+    st.markdown(
+        privacy_html.replace("__DARK_TARGET__", dark_target),
+        unsafe_allow_html=True
+    )
+
+if dark_mode:
+    privacy_target = "1" if privacy_mode else "0"
+    dark_top = "calc(50% + 156px)" if privacy_mode else "50%"
+    dark_bottom_mobile = "44px" if privacy_mode else "100px"
+    dark_html = """
+        <style>
+        .dark-fab-left {
+            position: fixed;
+            left: 14px;
+            top: __TOP__;
+            transform: translateY(-50%);
+            z-index: 9997;
+        }
+        .dark-fab-left form {
+            margin: 0;
+        }
+        .dark-fab-left button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            gap: 6px;
+            min-height: 124px;
+            padding: 10px 10px;
+            border-radius: 12px;
+            border: 1px solid #64748b;
+            background: linear-gradient(180deg, #1f2937 0%, #0f172a 100%);
+            color: #e2e8f0;
+            font-weight: 700;
+            font-size: 12px;
+            letter-spacing: 0.3px;
+            text-decoration: none;
+            box-shadow: 0 10px 24px rgba(2, 6, 23, 0.35);
+            transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+            cursor: pointer;
+        }
+        .dark-fab-left button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 14px 26px rgba(2, 6, 23, 0.45);
+            background: linear-gradient(180deg, #334155 0%, #1e293b 100%);
+        }
+        @media (max-width: 768px) {
+            .dark-fab-left {
+                left: 8px;
+                top: auto;
+                bottom: __BOTTOM_MOBILE__;
+                transform: none;
+            }
+            .dark-fab-left button {
+                writing-mode: horizontal-tb;
+                min-height: auto;
+                padding: 8px 10px;
+                border-radius: 10px;
+            }
+        }
+        </style>
+        <div class="dark-fab-left">
+            <form method="get" action="">
+                <input type="hidden" name="privacy" value="__PRIVACY_TARGET__" />
+                <input type="hidden" name="dark" value="0" />
+                <button type="submit" title="点击关闭夜间模式">🌙 夜间中</button>
+            </form>
+        </div>
+    """
+    st.markdown(
+        dark_html
+        .replace("__TOP__", dark_top)
+        .replace("__BOTTOM_MOBILE__", dark_bottom_mobile)
+        .replace("__PRIVACY_TARGET__", privacy_target),
         unsafe_allow_html=True
     )
 
@@ -839,14 +1081,64 @@ st.write("")
 
 c1, c2, c3, c4 = st.columns(4)
 lev_delta, lev_color = pf_service.leverage_status(lev_ratio)
-c1.metric("⚖️ 杠杆率", f"{lev_ratio:.2f}x", delta=lev_delta, delta_color=lev_color)
+with c1:
+    lev_metric_key = "lev_metric_ok" if lev_color != "inverse" else "lev_metric_bad"
+    with st.container(key=lev_metric_key):
+        st.metric("⚖️ 杠杆率", f"{lev_ratio:.2f}x", delta=lev_delta, delta_color=lev_color)
 
 # 集中度告警（类似杠杆率的做法）
 conc_delta, conc_color = pf_service.concentration_status(top3_conc)
-c2.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%", delta=conc_delta, delta_color=conc_color)
+with c2:
+    conc_metric_key = "conc_metric_ok" if conc_color == "normal" else "conc_metric_bad"
+    with st.container(key=conc_metric_key):
+        st.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%", delta=conc_delta, delta_color=conc_color)
 
-c3.metric("🔫 现金/负债", fmt_money(abs(cash_balance), 0), f"{cash_ratio:+.1f}%")
-c4.metric("🛡️ 总利润 (Profit)", fmt_money(pnl, 0), help="净资产 - 总投入本金")
+privacy_mode = is_privacy_mode()
+cash_abs = abs(cash_balance)
+if cash_balance < -1e-9:
+    cash_title = "🏦 融资负债 (USD)"
+    cash_value = fmt_money(cash_abs, 0)
+    debt_ratio = (cash_abs / final_net_asset) if final_net_asset > 1e-9 else float("inf")
+    if debt_ratio <= 0.2:
+        debt_level = "低风险"
+        cash_container_key = "debt_metric_low_wrap"
+    elif debt_ratio <= 0.5:
+        debt_level = "中风险"
+        cash_container_key = "debt_metric_mid_wrap"
+    else:
+        debt_level = "高风险"
+        cash_container_key = "debt_metric_high_wrap"
+
+    if privacy_mode:
+        cash_delta = f"负债占净资产 **** · {debt_level}"
+    elif final_net_asset > 1e-9:
+        cash_delta = f"负债占净资产 {debt_ratio * 100:.1f}% · {debt_level}"
+    else:
+        cash_delta = f"负债占净资产 N/A · {debt_level}"
+elif cash_balance > 1e-9:
+    cash_title = "💵 现金余额 (USD)"
+    cash_value = fmt_money(cash_balance, 0)
+    cash_delta = "现金占净资产 ****" if privacy_mode else f"现金占净资产 {cash_ratio:.1f}%"
+    cash_container_key = "cash_metric_wrap"
+else:
+    cash_title = "💵 现金余额 (USD)"
+    cash_value = fmt_money(0, 0)
+    cash_delta = "现金占净资产 ****" if privacy_mode else "现金占净资产 0.0%"
+    cash_container_key = "cash_flat_metric_wrap"
+
+with c3:
+    with st.container(key=cash_container_key):
+        st.metric(
+            cash_title,
+            cash_value,
+            cash_delta,
+            delta_color="off",
+            help="正值代表现金余额，负值代表融资负债。",
+        )
+with c4:
+    profit_metric_key = "profit_metric_ok" if pnl >= 0 else "profit_metric_bad"
+    with st.container(key=profit_metric_key):
+        st.metric("🛡️ 总利润 (Profit)", fmt_money(pnl, 0), help="净资产 - 总投入本金")
 
 st.divider()
 
@@ -981,33 +1273,56 @@ if not portfolio_df.empty or abs(cash_balance) > 1:
 
             table_rows.append("<tr>" + "".join(cells) + "</tr>")
 
+        if dark_mode:
+            holdings_wrap_bg = "#0b1220"
+            holdings_wrap_border = "#334155"
+            holdings_head_bg = "#111827"
+            holdings_head_color = "#cbd5e1"
+            holdings_row_border = "#1f2937"
+            holdings_row_color = "#e2e8f0"
+            holdings_row_hover = "#111827"
+            holdings_track_bg = "#1e293b"
+            holdings_track_border = "#334155"
+            holdings_zero_color = "#94a3b8"
+        else:
+            holdings_wrap_bg = "#ffffff"
+            holdings_wrap_border = "#e2e8f0"
+            holdings_head_bg = "#f8fafc"
+            holdings_head_color = "#334155"
+            holdings_row_border = "#f1f5f9"
+            holdings_row_color = "#0f172a"
+            holdings_row_hover = "#f8fafc"
+            holdings_track_bg = "#e2e8f0"
+            holdings_track_border = "#cbd5e1"
+            holdings_zero_color = "#64748b"
+
         st.markdown(
-            """
+            f"""
             <style>
-            .holdings-wrap { max-height: 450px; overflow: auto; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff; }
-            .holdings-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-            .holdings-table thead th {
+            .holdings-wrap {{ max-height: 450px; overflow: auto; border: 1px solid {holdings_wrap_border}; border-radius: 12px; background: {holdings_wrap_bg}; }}
+            .holdings-table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+            .holdings-table thead th {{
                 position: sticky; top: 0; z-index: 1;
-                background: #f8fafc; color: #334155; font-weight: 700;
-                text-align: left; padding: 10px 10px; border-bottom: 1px solid #e2e8f0;
-            }
-            .holdings-table tbody td {
-                padding: 9px 10px; border-bottom: 1px solid #f1f5f9; color: #0f172a; white-space: nowrap;
-            }
-            .holdings-table tbody tr:hover { background: #f8fafc; }
-            .sm-wrap { display: flex; align-items: center; gap: 8px; width: 100%; }
-            .sm-track {
+                background: {holdings_head_bg}; color: {holdings_head_color}; font-weight: 700;
+                text-align: left; padding: 10px 10px; border-bottom: 1px solid {holdings_wrap_border};
+            }}
+            .holdings-table tbody td {{
+                padding: 9px 10px; border-bottom: 1px solid {holdings_row_border}; color: {holdings_row_color}; white-space: nowrap;
+            }}
+            .holdings-table tbody tr:hover {{ background: {holdings_row_hover}; }}
+            .sm-wrap {{ display: flex; align-items: center; gap: 8px; width: 100%; }}
+            .sm-track {{
                 flex: 1 1 auto; min-width: 120px; height: 8px; border-radius: 999px; overflow: hidden;
-                background: #e2e8f0; border: 1px solid #cbd5e1;
-            }
-            .sm-fill { height: 100%; border-radius: 999px; filter: saturate(0.72); }
-            .sm-fill.sm-pos { background: linear-gradient(90deg, rgba(34, 197, 94, 0.82), rgba(22, 163, 74, 0.82)); }
-            .sm-fill.sm-neg { background: linear-gradient(90deg, rgba(248, 113, 113, 0.82), rgba(220, 38, 38, 0.82)); }
-            .sm-fill.sm-zero { background: rgba(148, 163, 184, 0.9); }
-            .sm-label { font-weight: 400; font-size: 13px; min-width: 56px; text-align: right; }
-            .sm-label.sm-pos { color: rgba(22, 163, 74, 0.86); }
-            .sm-label.sm-neg { color: rgba(220, 38, 38, 0.86); }
-            .sm-label.sm-zero { color: #64748b; }
+                background: {holdings_track_bg}; border: 1px solid {holdings_track_border};
+            }}
+            .sm-fill {{ height: 100%; border-radius: 999px; filter: saturate(0.72); }}
+            .sm-fill.sm-pos {{ background: linear-gradient(90deg, rgba(34, 197, 94, 0.82), rgba(22, 163, 74, 0.82)); }}
+            .sm-fill.sm-neg {{ background: linear-gradient(90deg, rgba(248, 113, 113, 0.82), rgba(220, 38, 38, 0.82)); }}
+            .sm-fill.sm-zero {{ background: rgba(148, 163, 184, 0.9); }}
+            .sm-label {{ font-weight: 400; font-size: 13px; min-width: 56px; text-align: right; }}
+            .sm-label.sm-pos {{ color: rgba(22, 163, 74, 0.86); }}
+            .sm-label.sm-neg {{ color: rgba(220, 38, 38, 0.86); }}
+            .sm-label.sm-zero {{ color: {holdings_zero_color}; }}
             </style>
             """,
             unsafe_allow_html=True
@@ -1118,7 +1433,8 @@ with cal_right:
         metric_mode='amount' if cal_metric == "$" else 'rate',
         year=selected_year,
         month=selected_month if cal_view == "月" else None,
-        mask_value=privacy_mode
+        mask_value=privacy_mode,
+        dark_mode=dark_mode,
     )
 
 with cal_left:
@@ -1126,8 +1442,13 @@ with cal_left:
     anchor_date = period_stats["anchor_date"]
     # 与右侧筛选控件行做高度对齐，卡片从日历主体同一水平线开始
     st.markdown('<div style="height:46px;"></div>', unsafe_allow_html=True)
-    st.markdown(
-        """
+    if dark_mode:
+        side_shadow = "0 10px 20px rgba(2, 6, 23, 0.45)"
+        side_title_color = "#cbd5e1"
+    else:
+        side_shadow = "0 10px 20px rgba(15, 23, 42, 0.16)"
+        side_title_color = "#334155"
+    side_css = """
         <style>
         .pnl-side-card {
             width: 100%;
@@ -1142,12 +1463,12 @@ with cal_left:
         }
         .pnl-side-card:hover {
             transform: translateY(-2px) scale(1.01);
-            box-shadow: 0 10px 20px rgba(15, 23, 42, 0.16);
+            box-shadow: __SIDE_SHADOW__;
             filter: saturate(1.04);
         }
         .pnl-side-title {
             font-size: 11px;
-            color: #334155;
+            color: __SIDE_TITLE_COLOR__;
             font-weight: 700;
             line-height: 1.2;
         }
@@ -1158,11 +1479,19 @@ with cal_left:
             line-height: 1.1;
         }
         </style>
-        """,
+    """
+    st.markdown(
+        side_css.replace("__SIDE_SHADOW__", side_shadow).replace("__SIDE_TITLE_COLOR__", side_title_color),
         unsafe_allow_html=True
     )
 
     def _period_card_style(val):
+        if dark_mode:
+            if val > 0:
+                return ("linear-gradient(135deg, #0f2a20 0%, #133428 100%)", "#22c55e", "#86efac")
+            if val < 0:
+                return ("linear-gradient(135deg, #3b1013 0%, #451417 100%)", "#ef4444", "#fca5a5")
+            return ("linear-gradient(135deg, #111827 0%, #1e293b 100%)", "#64748b", "#cbd5e1")
         if val > 0:
             return ("linear-gradient(135deg, #ecfdf5 0%, #bbf7d0 100%)", "#22c55e", "#166534")
         if val < 0:

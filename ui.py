@@ -384,12 +384,12 @@ def _fmt_rate(value):
     return f"{value:+.2f}%"
 
 
-def _value_color(value):
+def _value_color(value, dark_mode=False):
     if value > 0:
         return "#16a34a"
     if value < 0:
         return "#dc2626"
-    return "#475569"
+    return "#94a3b8" if dark_mode else "#475569"
 
 
 def _cell_bg(value, max_abs):
@@ -404,9 +404,35 @@ def _cell_bg(value, max_abs):
     return "rgba(148, 163, 184, 0.10)"
 
 
-def _render_calendar_hover_css():
-    st.markdown(
-        """
+def _calendar_theme(dark_mode=False):
+    if dark_mode:
+        return {
+            "panel_border": "#334155",
+            "panel_bg": "#0b1220",
+            "title_color": "#e2e8f0",
+            "week_label_color": "#cbd5e1",
+            "tile_border": "#334155",
+            "no_data_bg": "#111827",
+            "day_color": "#e2e8f0",
+            "hover_shadow": "0 10px 20px rgba(2, 6, 23, 0.48)",
+            "inset_shadow": "inset 0 1px 0 rgba(148,163,184,0.10)",
+        }
+    return {
+        "panel_border": "#e2e8f0",
+        "panel_bg": "#ffffff",
+        "title_color": "#1e293b",
+        "week_label_color": "#334155",
+        "tile_border": "#e2e8f0",
+        "no_data_bg": "#f8fafc",
+        "day_color": "#1e293b",
+        "hover_shadow": "0 10px 20px rgba(15, 23, 42, 0.18)",
+        "inset_shadow": "inset 0 1px 0 rgba(255,255,255,0.35)",
+    }
+
+
+def _render_calendar_hover_css(dark_mode=False):
+    theme = _calendar_theme(dark_mode=dark_mode)
+    css = """
         <style>
         .pnl-calendar-host .pnl-tile {
             transition: transform 0.16s ease, box-shadow 0.16s ease;
@@ -417,7 +443,7 @@ def _render_calendar_hover_css():
         }
         .pnl-calendar-host .pnl-tile:hover {
             transform: scale(1.06);
-            box-shadow: 0 10px 20px rgba(15, 23, 42, 0.18);
+            box-shadow: __HOVER_SHADOW__;
             z-index: 5;
         }
         .pnl-calendar-host .pnl-tile-no-data:hover {
@@ -426,29 +452,32 @@ def _render_calendar_hover_css():
             z-index: 0;
         }
         </style>
-        """,
+    """
+    st.markdown(
+        css.replace("__HOVER_SHADOW__", theme["hover_shadow"]),
         unsafe_allow_html=True,
     )
 
 
-def _render_month(year, month, daily_map, metric_mode, max_abs, mask_value=False):
+def _render_month(year, month, daily_map, metric_mode, max_abs, mask_value=False, dark_mode=False):
     month_name = f"{year}-{month:02d}"
     cal = calendar.Calendar(firstweekday=0)
     week_days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     today_date = datetime.now().date()
+    theme = _calendar_theme(dark_mode=dark_mode)
 
     html_parts = [
-        '<div class="pnl-calendar-host" style="width:100%;margin:0 0 12px 0;border:1px solid #e2e8f0;'
-        'border-radius:10px;padding:10px;background:#ffffff;">'
+        f'<div class="pnl-calendar-host" style="width:100%;margin:0 0 12px 0;border:1px solid {theme["panel_border"]};'
+        f'border-radius:10px;padding:10px;background:{theme["panel_bg"]};">'
     ]
     html_parts.append(
-        f'<div style="font-weight:700;font-size:14px;color:#1e293b;margin-bottom:8px;">{month_name}</div>'
+        f'<div style="font-weight:700;font-size:14px;color:{theme["title_color"]};margin-bottom:8px;">{month_name}</div>'
     )
     html_parts.append('<div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;">')
 
     for wd in week_days:
         html_parts.append(
-            f'<div style="font-size:13px;font-weight:800;color:#334155;'
+            f'<div style="font-size:13px;font-weight:800;color:{theme["week_label_color"]};'
             f'text-align:center;padding:6px 0;">{wd}</div>'
         )
 
@@ -456,8 +485,8 @@ def _render_month(year, month, daily_map, metric_mode, max_abs, mask_value=False
         for day_obj in week:
             if day_obj.month != month:
                 html_parts.append(
-                    '<div class="pnl-tile pnl-tile-no-data" style="min-height:68px;border:1px solid #e2e8f0;border-radius:14px;'
-                    'background:#f8fafc;"></div>'
+                    f'<div class="pnl-tile pnl-tile-no-data" style="min-height:68px;border:1px solid {theme["tile_border"]};border-radius:14px;'
+                    f'background:{theme["no_data_bg"]};"></div>'
                 )
                 continue
 
@@ -473,12 +502,12 @@ def _render_month(year, month, daily_map, metric_mode, max_abs, mask_value=False
                 tile_cls = "pnl-tile"
 
             bg = _cell_bg(value, max_abs)
-            value_color = _value_color(value)
+            value_color = _value_color(value, dark_mode=dark_mode)
             html_parts.append(
-                f'<div class="{tile_cls}" style="min-height:68px;border:1px solid #e2e8f0;border-radius:14px;'
+                f'<div class="{tile_cls}" style="min-height:68px;border:1px solid {theme["tile_border"]};border-radius:14px;'
                 f'padding:8px 6px;background:{bg};display:flex;flex-direction:column;'
-                'align-items:center;justify-content:center;gap:8px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.35);">'
-                f'<div style="font-size:15px;font-weight:800;color:#1e293b;line-height:1;text-align:center;">{day_obj.day:02d}</div>'
+                f'align-items:center;justify-content:center;gap:8px;box-shadow:{theme["inset_shadow"]};">'
+                f'<div style="font-size:15px;font-weight:800;color:{theme["day_color"]};line-height:1;text-align:center;">{day_obj.day:02d}</div>'
                 f'<div style="font-size:12px;font-weight:400;color:{value_color};line-height:1.15;text-align:center;">{display_val}</div>'
                 '</div>'
             )
@@ -487,25 +516,26 @@ def _render_month(year, month, daily_map, metric_mode, max_abs, mask_value=False
     st.markdown("".join(html_parts), unsafe_allow_html=True)
 
 
-def _render_week(week_start, daily_map, metric_mode, max_abs, mask_value=False):
+def _render_week(week_start, daily_map, metric_mode, max_abs, mask_value=False, dark_mode=False):
     start = pd.to_datetime(week_start).to_pydatetime()
     end = start + timedelta(days=6)
     week_days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     today_date = datetime.now().date()
+    theme = _calendar_theme(dark_mode=dark_mode)
 
     html_parts = [
-        '<div class="pnl-calendar-host" style="width:100%;margin:0 0 12px 0;border:1px solid #e2e8f0;'
-        'border-radius:10px;padding:10px;background:#ffffff;">'
+        f'<div class="pnl-calendar-host" style="width:100%;margin:0 0 12px 0;border:1px solid {theme["panel_border"]};'
+        f'border-radius:10px;padding:10px;background:{theme["panel_bg"]};">'
     ]
     html_parts.append(
-        f'<div style="font-weight:700;font-size:14px;color:#1e293b;margin-bottom:8px;">'
+        f'<div style="font-weight:700;font-size:14px;color:{theme["title_color"]};margin-bottom:8px;">'
         f'Week {start:%Y-%m-%d} ~ {end:%Y-%m-%d}</div>'
     )
     html_parts.append('<div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;">')
 
     for wd in week_days:
         html_parts.append(
-            f'<div style="font-size:12px;font-weight:800;color:#334155;'
+            f'<div style="font-size:12px;font-weight:800;color:{theme["week_label_color"]};'
             f'text-align:center;padding:4px 0;">{wd}</div>'
         )
 
@@ -523,12 +553,12 @@ def _render_week(week_start, daily_map, metric_mode, max_abs, mask_value=False):
             tile_cls = "pnl-tile"
 
         bg = _cell_bg(value, max_abs)
-        value_color = _value_color(value)
+        value_color = _value_color(value, dark_mode=dark_mode)
         html_parts.append(
-            f'<div class="{tile_cls}" style="min-height:56px;border:1px solid #e2e8f0;border-radius:12px;'
+            f'<div class="{tile_cls}" style="min-height:56px;border:1px solid {theme["tile_border"]};border-radius:12px;'
             f'padding:6px 4px;background:{bg};display:flex;flex-direction:column;'
-            'align-items:center;justify-content:center;gap:6px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.35);">'
-            f'<div style="font-size:13px;font-weight:800;color:#1e293b;line-height:1;text-align:center;">{day_obj.day:02d}</div>'
+            f'align-items:center;justify-content:center;gap:6px;box-shadow:{theme["inset_shadow"]};">'
+            f'<div style="font-size:13px;font-weight:800;color:{theme["day_color"]};line-height:1;text-align:center;">{day_obj.day:02d}</div>'
             f'<div style="font-size:11px;font-weight:400;color:{value_color};line-height:1.15;text-align:center;">{display_val}</div>'
             '</div>'
         )
@@ -537,9 +567,10 @@ def _render_week(week_start, daily_map, metric_mode, max_abs, mask_value=False):
     st.markdown("".join(html_parts), unsafe_allow_html=True)
 
 
-def _render_year_cards(year, monthly_df, metric_mode, months_with_data=None, mask_value=False):
+def _render_year_cards(year, monthly_df, metric_mode, months_with_data=None, mask_value=False, dark_mode=False):
     months_with_data = set(months_with_data or [])
     monthly_map = {}
+    theme = _calendar_theme(dark_mode=dark_mode)
     for _, row in monthly_df.iterrows():
         monthly_map[int(row['month'])] = {
             'monthly_amount': float(row['monthly_amount']),
@@ -560,12 +591,12 @@ def _render_year_cards(year, monthly_df, metric_mode, months_with_data=None, mas
         value = item['monthly_amount'] if metric_mode == 'amount' else item['monthly_rate']
         display_val = _fmt_amount(value, mask_value) if metric_mode == 'amount' else _fmt_rate(value)
         bg = _cell_bg(value, max_abs)
-        value_color = _value_color(value)
+        value_color = _value_color(value, dark_mode=dark_mode)
         tile_cls = "pnl-tile" if month in months_with_data else "pnl-tile pnl-tile-no-data"
         html_parts.append(
-            f'<div class="{tile_cls}" style="border:1px solid #e2e8f0;border-radius:12px;padding:14px 14px;'
+            f'<div class="{tile_cls}" style="border:1px solid {theme["tile_border"]};border-radius:12px;padding:14px 14px;'
             f'background:{bg};">'
-            f'<div style="font-size:13px;color:#334155;margin-bottom:8px;">{year}-{month:02d}</div>'
+            f'<div style="font-size:13px;color:{theme["week_label_color"]};margin-bottom:8px;">{year}-{month:02d}</div>'
             f'<div style="font-size:16px;font-weight:400;color:{value_color};">{display_val}</div>'
             '</div>'
         )
@@ -574,7 +605,16 @@ def _render_year_cards(year, monthly_df, metric_mode, months_with_data=None, mas
     st.markdown("".join(html_parts), unsafe_allow_html=True)
 
 
-def render_pnl_calendar(history_df, view_mode='month', metric_mode='amount', year=None, month=None, week_start=None, mask_value=False):
+def render_pnl_calendar(
+    history_df,
+    view_mode='month',
+    metric_mode='amount',
+    year=None,
+    month=None,
+    week_start=None,
+    mask_value=False,
+    dark_mode=False,
+):
     """
     收益日历：
     - view_mode: month/year
@@ -584,7 +624,7 @@ def render_pnl_calendar(history_df, view_mode='month', metric_mode='amount', yea
     if daily_df.empty:
         st.info("暂无快照数据，收益日历暂不可用。")
         return
-    _render_calendar_hover_css()
+    _render_calendar_hover_css(dark_mode=dark_mode)
 
     daily_map = {
         row['day_key']: {'daily_amount': float(row['daily_amount']), 'daily_rate': float(row['daily_rate'])}
@@ -602,7 +642,7 @@ def render_pnl_calendar(history_df, view_mode='month', metric_mode='amount', yea
             item = daily_map.get(d.strftime('%Y-%m-%d'))
             values.append(float(item[metric_key]) if item else 0.0)
         max_abs = float(max(abs(v) for v in values)) if values else 0.0
-        _render_week(week_start, daily_map, metric_mode, max_abs=max_abs, mask_value=mask_value)
+        _render_week(week_start, daily_map, metric_mode, max_abs=max_abs, mask_value=mask_value, dark_mode=dark_mode)
         return
 
     if year is None:
@@ -620,9 +660,16 @@ def render_pnl_calendar(history_df, view_mode='month', metric_mode='amount', yea
         scoped = year_df[year_df['date'].dt.month == month]
         metric_col = 'daily_amount' if metric_mode == 'amount' else 'daily_rate'
         max_abs = float(scoped[metric_col].abs().max()) if not scoped.empty else 0.0
-        _render_month(year, month, daily_map, metric_mode, max_abs=max_abs, mask_value=mask_value)
+        _render_month(year, month, daily_map, metric_mode, max_abs=max_abs, mask_value=mask_value, dark_mode=dark_mode)
         return
 
     monthly_df = _prepare_monthly_pnl(year_df)
     months_with_data = year_df['date'].dt.month.astype(int).unique().tolist()
-    _render_year_cards(year, monthly_df, metric_mode, months_with_data=months_with_data, mask_value=mask_value)
+    _render_year_cards(
+        year,
+        monthly_df,
+        metric_mode,
+        months_with_data=months_with_data,
+        mask_value=mask_value,
+        dark_mode=dark_mode,
+    )
