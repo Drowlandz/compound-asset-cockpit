@@ -740,9 +740,106 @@ def render_transaction_flow(privacy_mode, show_title=True):
         st.subheader("📋 交易流水")
 
     all_trans = db.get_all_transactions(False)
-    if not all_trans.empty:
-        all_trans['date'] = pd.to_datetime(all_trans['date'])
+    deleted_trans = db.get_deleted_transactions_last_7_days()
 
+    latest_active = None
+    def _render_tx_rows_with_undo(df_tx, key_prefix, show_symbol=False):
+        if df_tx is None or df_tx.empty:
+            st.caption("无记录")
+            return
+
+        rows = df_tx.copy().reset_index(drop=True)
+        for _, row in rows.iterrows():
+            c_info, c_btn = st.columns([7.0, 1.0], vertical_alignment="center")
+            tx_date = pd.to_datetime(row.get('date'), errors='coerce')
+            date_text = tx_date.strftime("%Y-%m-%d") if pd.notna(tx_date) else "-"
+            symbol_text = f"{str(row.get('symbol', '-')).upper()} · " if show_symbol else ""
+            tx_type = str(row.get('type', '-'))
+            qty = pd.to_numeric(row.get('quantity'), errors='coerce')
+            qty_text = f"{float(qty):g}" if pd.notna(qty) else "-"
+            if privacy_mode:
+                price_text = "****"
+            else:
+                price = pd.to_numeric(row.get('price'), errors='coerce')
+                price_text = f"${float(price):,.2f}" if pd.notna(price) else "-"
+            note = str(row.get('note', '') or '')
+
+            line_text = f"{date_text} · {symbol_text}{tx_type} {qty_text} @ {price_text}"
+            if note:
+                line_text = f"{line_text} · {note}"
+            c_info.caption(line_text)
+
+            tx_id = int(row['id'])
+            if c_btn.button("撤回", key=f"{key_prefix}_undo_{tx_id}", use_container_width=True, type="secondary"):
+                tx_service.soft_delete_transaction(tx_id)
+                st.cache_data.clear()
+                invalidate_portfolio_cache()
+                st.toast("已撤回该笔交易")
+                st.rerun()
+
+    if not all_trans.empty:
+        all_trans['date'] = pd.to_datetime(all_trans['date'], errors='coerce')
+        all_trans = all_trans.sort_values(['date', 'id'], ascending=[False, False]).reset_index(drop=True)
+        latest_active = all_trans.iloc[0]
+
+    latest_deleted = None
+    if not deleted_trans.empty:
+        deleted_trans['date'] = pd.to_datetime(deleted_trans['date'], errors='coerce')
+        deleted_trans = deleted_trans.sort_values(['date', 'id'], ascending=[False, False]).reset_index(drop=True)
+        latest_deleted = deleted_trans.iloc[0]
+
+    def _tx_brief(row):
+        if row is None:
+            return "无"
+        try:
+            d = pd.to_datetime(row.get('date')).strftime("%Y-%m-%d")
+        except Exception:
+            d = "-"
+        symbol = str(row.get('symbol', '-'))
+        tx_type = str(row.get('type', '-'))
+        qty = pd.to_numeric(row.get('quantity'), errors='coerce')
+        qty_text = f"{float(qty):g}" if pd.notna(qty) else "-"
+        if privacy_mode:
+            price_text = "****"
+        else:
+            p = pd.to_numeric(row.get('price'), errors='coerce')
+            price_text = f"${float(p):,.2f}" if pd.notna(p) else "-"
+        return f"{d} · {symbol} · {tx_type} {qty_text} @ {price_text}"
+
+    action_key = "main" if show_title else "modal"
+    a1, a2 = st.columns(2)
+    with a1:
+        if st.button(
+            "↩️ 撤回最近一笔",
+            key=f"undo_latest_tx_{action_key}",
+            use_container_width=True,
+            type="secondary",
+            disabled=(latest_active is None),
+        ):
+            tx_service.soft_delete_transaction(int(latest_active['id']))
+            st.cache_data.clear()
+            invalidate_portfolio_cache()
+            st.toast("已撤回最近一笔交易")
+            st.rerun()
+        st.caption(f"最近成交：{_tx_brief(latest_active)}")
+    with a2:
+        if st.button(
+            "⤴️ 恢复最近撤回",
+            key=f"redo_latest_tx_{action_key}",
+            use_container_width=True,
+            type="secondary",
+            disabled=(latest_deleted is None),
+        ):
+            tx_service.restore_transaction(int(latest_deleted['id']))
+            st.cache_data.clear()
+            invalidate_portfolio_cache()
+            st.toast("已恢复最近撤回交易")
+            st.rerun()
+        st.caption(f"最近撤回：{_tx_brief(latest_deleted)}")
+
+    st.markdown("")
+
+    if not all_trans.empty:
         if 'portfolio_cache' in st.session_state and not st.session_state['portfolio_cache'].empty:
             portfolio_df_local = st.session_state['portfolio_cache']
         else:
@@ -781,27 +878,11 @@ def render_transaction_flow(privacy_mode, show_title=True):
                 mv_label = f"${mv:,.0f}"
 
             with st.expander(f"📦 {sym} (市值 {mv_label} · {count} 笔)"):
-                st.data_editor(
-                    display_sym[['id', 'date', 'type', 'quantity', 'price', 'note']],
-                    hide_index=True,
-                    use_container_width=True,
-                    key=f"editor_{sym}",
-                    num_rows="fixed",
-                    column_config={
-                        "id": None,
-                        "date": st.column_config.DateColumn("日期"),
-                        "type": st.column_config.TextColumn("方向", width="small"),
-                        "quantity": st.column_config.NumberColumn("数量"),
-                        "price": money_col("价格", "$%.2f"),
-                        "note": st.column_config.TextColumn("备注")
-                    }
+                _render_tx_rows_with_undo(
+                    df_sym[['id', 'date', 'type', 'quantity', 'price', 'note']],
+                    key_prefix=f"tx_{sym}",
+                    show_symbol=False
                 )
-                if st.session_state.get(f"editor_{sym}", {}).get("deleted_rows"):
-                    for idx in st.session_state[f"editor_{sym}"]["deleted_rows"]:
-                        tx_service.soft_delete_transaction(int(df_sym.iloc[idx]['id']))
-                    st.cache_data.clear()
-                    invalidate_portfolio_cache()
-                    st.rerun()
 
         if inactive_symbols:
             df_inactive = all_trans[all_trans['symbol'].isin(inactive_symbols)].sort_values('date', ascending=False)
@@ -811,30 +892,16 @@ def render_transaction_flow(privacy_mode, show_title=True):
                 display_inactive['price'] = "****"
 
             with st.expander(f"🗄️ 其他 / 已清仓 ({count_inactive} 笔交易)"):
-                st.data_editor(
+                _render_tx_rows_with_undo(
                     display_inactive[['id', 'date', 'symbol', 'type', 'quantity', 'price', 'note']],
-                    hide_index=True,
-                    use_container_width=True,
-                    key="editor_inactive",
-                    num_rows="fixed",
-                    column_config={
-                        "id": None,
-                        "date": st.column_config.DateColumn("日期"),
-                        "symbol": st.column_config.TextColumn("代码", width="small"),
-                        "type": st.column_config.TextColumn("方向", width="small"),
-                        "quantity": st.column_config.NumberColumn("数量"),
-                        "price": money_col("价格", "$%.2f"),
-                        "note": st.column_config.TextColumn("备注")
-                    }
+                    key_prefix="tx_inactive",
+                    show_symbol=True
                 )
-                if st.session_state.get("editor_inactive", {}).get("deleted_rows"):
-                    for idx in st.session_state["editor_inactive"]["deleted_rows"]:
-                        tx_service.soft_delete_transaction(int(df_inactive.iloc[idx]['id']))
-                    st.cache_data.clear()
-                    invalidate_portfolio_cache()
-                    st.rerun()
     else:
-        st.info("暂无交易记录，快去记一笔吧！")
+        if latest_deleted is not None:
+            st.info("当前没有有效交易记录，可先使用“恢复最近撤回”。")
+        else:
+            st.info("暂无交易记录，快去记一笔吧！")
 
 
 # ================= 5. 主页面逻辑 =================
