@@ -32,16 +32,16 @@ pyinstaller \
   --clean \
   --windowed \
   --name "$APP_NAME" \
-  --collect-all streamlit \
-  --collect-all streamlit_echarts \
-  --collect-all yfinance \
-  --hidden-import yfinance \
-  --add-data "app.py:." \
-  --add-data "config.py:." \
-  --add-data "data_manager.py:." \
-  --add-data "utils.py:." \
-  --add-data "ui.py:." \
-  --add-data "services:services" \
+  --collect-submodules streamlit \
+  --collect-data streamlit \
+  --copy-metadata streamlit \
+  --collect-submodules streamlit_echarts \
+  --collect-data streamlit_echarts \
+  --copy-metadata streamlit-echarts \
+  --collect-submodules yfinance \
+  --collect-data yfinance \
+  --copy-metadata yfinance \
+  --hidden-import im_app \
   --add-data "assets:assets" \
   run_app.py
 
