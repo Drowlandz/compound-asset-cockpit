@@ -33,7 +33,7 @@ def _build_frozen_entry_script():
     temp_dir = tempfile.mkdtemp(prefix="im-entry-")
     entry_script = os.path.join(temp_dir, "im_entry.py")
     with open(entry_script, "w", encoding="utf-8") as f:
-        f.write("import im_app  # noqa: F401\n")
+        f.write("import runpy\nrunpy.run_module('im_app', run_name='__main__')\n")
 
     _TEMP_ENTRY_DIR = temp_dir
 

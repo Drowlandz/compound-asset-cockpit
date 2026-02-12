@@ -1,6 +1,8 @@
-"""Streamlit launcher stub for packaged app.
+"""Streamlit launcher stub.
 
-Keeps runtime script tiny; core logic lives in `im_app.py`.
+Use runpy so Streamlit reruns execute im_app every time.
 """
 
-import im_app  # noqa: F401
+import runpy
+
+runpy.run_module("im_app", run_name="__main__")
