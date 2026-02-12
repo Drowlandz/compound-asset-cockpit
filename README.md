@@ -175,7 +175,7 @@ RUN_HOUR=18 RUN_MINUTE=5 ./scripts/install_daily_refresh_launchd.sh
 - `~/Library/LaunchAgents/com.rowland.im.daily_refresh.plist`
 - 日志文件：`logs/daily_refresh.out.log`、`logs/daily_refresh.err.log`
 
-### macOS 打包 DMG
+### macOS 打包 DMG（开发者）
 
 ```bash
 # 首次可选：给脚本执行权限
@@ -195,6 +195,21 @@ MACOS_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/bui
 
 - `dist/IM.app`
 - `dist/IM.dmg`
+
+### macOS DMG 使用教程（普通用户）
+
+1. 从 GitHub Releases 下载最新版 `IM.dmg` 和 `IM.dmg.sha256`。  
+2. （可选）在终端校验完整性：`shasum -a 256 IM.dmg`，确认输出与 `IM.dmg.sha256` 一致。  
+3. 双击打开 `IM.dmg`，把 `IM.app` 拖到 `Applications`。  
+4. 第一次启动时，建议在“应用程序”里对 `IM.app` 右键选择“打开”。  
+5. 若出现“已损坏/无法验证开发者”等 Gatekeeper 拦截，执行：`xattr -dr com.apple.quarantine /Applications/IM.app` 后重试。  
+6. 启动成功后，浏览器会自动打开本地地址（默认 `http://localhost:8501`）。  
+
+说明：
+
+- 当前发布包为“0 `.py` 文件”封装，不包含项目源码明文文件。  
+- 应用数据默认保存在：`~/Library/Application Support/IM/investments.db`。  
+- 卸载应用时，删除 `/Applications/IM.app` 即可；如需彻底清理数据，再删除 `~/Library/Application Support/IM/`。  
 
 ## 💾 数据库结构
 
