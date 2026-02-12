@@ -63,6 +63,7 @@ def run_streamlit_with_auto_stop(
     """
     env = os.environ.copy()
     env["STREAMLIT_SERVER_HEADLESS"] = "true"
+    env.setdefault("STREAMLIT_GLOBAL_DEVELOPMENT_MODE", "false")
 
     cmd = [
         python_executable,

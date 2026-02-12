@@ -17,13 +17,15 @@ def resolve_path(path):
     )
 
 
-def run_plain_streamlit():
+def run_plain_streamlit(port=8501):
     """Run streamlit in the current process (legacy behavior)."""
     os.environ["STREAMLIT_SERVER_HEADLESS"] = "true"
+    os.environ.setdefault("STREAMLIT_GLOBAL_DEVELOPMENT_MODE", "false")
     sys.argv = [
         "streamlit",
         "run",
         resolve_path("app.py"),
+        f"--server.port={port}",
     ]
     return stcli.main()
 
@@ -64,10 +66,16 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    if args.no_auto_stop or shutil.which("lsof") is None:
-        if not args.no_auto_stop and shutil.which("lsof") is None:
+
+    # In frozen executables, child-process mode using "sys.executable -m streamlit"
+    # is not reliable because sys.executable points to this app binary itself.
+    frozen = bool(getattr(sys, "frozen", False))
+    if frozen or args.no_auto_stop or shutil.which("lsof") is None:
+        if frozen:
+            print("Frozen app detected, using legacy mode (no auto-stop).")
+        elif not args.no_auto_stop and shutil.which("lsof") is None:
             print("lsof not found, fallback to legacy mode (no auto-stop).")
-        sys.exit(run_plain_streamlit())
+        sys.exit(run_plain_streamlit(port=args.port))
     sys.exit(
         run_streamlit_with_auto_stop(
             port=args.port,

@@ -1,16 +1,47 @@
 import sqlite3
 import pandas as pd
 import os
+import shutil
 import sys
 from datetime import date, datetime
 
 # === 路径修正逻辑 ===
-if getattr(sys, 'frozen', False):
-    BASE_DIR = os.path.dirname(sys.executable)
-else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+APP_NAME = "IM"
 
-DB_NAME = os.path.join(BASE_DIR, "investments.db")
+
+def _default_frozen_data_dir():
+    home = os.path.expanduser("~")
+    if sys.platform == "darwin":
+        return os.path.join(home, "Library", "Application Support", APP_NAME)
+    if os.name == "nt":
+        base = os.environ.get("APPDATA", os.path.join(home, "AppData", "Roaming"))
+        return os.path.join(base, APP_NAME)
+    base = os.environ.get("XDG_DATA_HOME", os.path.join(home, ".local", "share"))
+    return os.path.join(base, APP_NAME)
+
+
+def _resolve_db_name():
+    if not getattr(sys, "frozen", False):
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(base_dir, "investments.db")
+
+    data_dir = _default_frozen_data_dir()
+    try:
+        os.makedirs(data_dir, exist_ok=True)
+    except OSError:
+        data_dir = os.path.dirname(sys.executable)
+
+    target_db = os.path.join(data_dir, "investments.db")
+    legacy_db = os.path.join(os.path.dirname(sys.executable), "investments.db")
+    if legacy_db != target_db and os.path.exists(legacy_db) and not os.path.exists(target_db):
+        try:
+            shutil.copy2(legacy_db, target_db)
+        except OSError:
+            pass
+    return target_db
+
+
+DB_NAME = _resolve_db_name()
 
 
 def init_db():

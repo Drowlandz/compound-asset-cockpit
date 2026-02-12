@@ -12,3 +12,9 @@ logs/
 report_generator.py
 report_generator_backup.py
 test.py
+
+# macOS packaging artifacts
+.venv-macos-build/
+build/
+dist/
+*.spec

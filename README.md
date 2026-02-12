@@ -175,6 +175,27 @@ RUN_HOUR=18 RUN_MINUTE=5 ./scripts/install_daily_refresh_launchd.sh
 - `~/Library/LaunchAgents/com.rowland.im.daily_refresh.plist`
 - 日志文件：`logs/daily_refresh.out.log`、`logs/daily_refresh.err.log`
 
+### macOS 打包 DMG
+
+```bash
+# 首次可选：给脚本执行权限
+chmod +x scripts/build_macos_dmg.sh
+
+# 直接构建（默认 ad-hoc 签名）
+./scripts/build_macos_dmg.sh
+
+# 使用开发者证书签名（可选）
+MACOS_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/build_macos_dmg.sh
+```
+
+> 注意：默认 ad-hoc 签名仅适合本机测试；对外分发建议使用 Developer ID 并完成 notarization。  
+> 若本机被 Gatekeeper 拦截，可执行：`xattr -dr com.apple.quarantine /Applications/IM.app`
+
+构建完成后产物在：
+
+- `dist/IM.app`
+- `dist/IM.dmg`
+
 ## 💾 数据库结构
 
 ### 主要表
