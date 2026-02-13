@@ -1108,6 +1108,24 @@ st.markdown("---")
 
 
 # --- 3. 个人资产计算 ---
+def _render_highest_badge():
+    portfolio_df = db.get_portfolio_summary()
+    max_days_held = 0.0
+    highest_badge_icon = "🌱"
+    highest_badge_name = "新手"
+
+    if not portfolio_df.empty:
+        portfolio_df = pf_service.filter_active_positions(portfolio_df)
+        max_days_held, highest_badge_icon, highest_badge_name = pf_service.get_highest_badge(
+            portfolio_df,
+            ut.get_badge_info
+        )
+
+    st.markdown(
+        f"""<div class="badge-container"><div class="badge-icon">{highest_badge_icon}</div><div class="badge-text">{highest_badge_name}<div class="badge-label">坚持 {int(max_days_held)} 天</div></div></div>""",
+        unsafe_allow_html=True
+    )
+
 
 def _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled):
     # --- 3. 个人资产计算 ---
@@ -1117,9 +1135,6 @@ def _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled):
 
     market_val_usd = 0.0
     total_cost_usd = 0.0
-    max_days_held = 0.0
-    highest_badge_icon = "🌱"
-    highest_badge_name = "新手"
 
     if not portfolio_df.empty:
         portfolio_df = pf_service.filter_active_positions(portfolio_df)
@@ -1166,15 +1181,6 @@ def _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled):
                 st.session_state['last_update'] = datetime.now()
             else:
                 portfolio_df = cached_df
-
-        max_days_held, highest_badge_icon, highest_badge_name = pf_service.get_highest_badge(
-            portfolio_df,
-            ut.get_badge_info
-        )
-
-    st.markdown(
-        f"""<div class="badge-container"><div class="badge-icon">{highest_badge_icon}</div><div class="badge-text">{highest_badge_name}<div class="badge-label">坚持 {int(max_days_held)} 天</div></div></div>""",
-        unsafe_allow_html=True)
 
     metrics = pf_service.calculate_account_metrics(
         portfolio_df=portfolio_df,
@@ -1501,6 +1507,7 @@ if not _probe_df.empty:
         _probe_has_us_stock = any(ut.detect_currency(str(sym)) == "USD" for sym in _probe_us['Raw Symbol'].astype(str).tolist())
 
 _live_price_tick_active = bool(live_refresh_enabled and is_us_market_open_now() and _probe_has_us_stock)
+_render_highest_badge()
 if _live_price_tick_active:
     _render_portfolio_section_live(privacy_mode, dark_mode, live_refresh_enabled)
 else:
