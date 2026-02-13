@@ -185,7 +185,7 @@ def get_stock_price_from_db(symbol, asset_category='STOCK', option_info=None):
     return prices.get(symbol)
 
 
-def update_portfolio_valuation(df):
+def update_portfolio_valuation(df, force_realtime_us_only=False):
     rates = get_exchange_rates()
     current_prices = []
     mkt_values_usd = []
@@ -214,7 +214,11 @@ def update_portfolio_valuation(df):
         realtime_price = None
         if row['Type'] == 'STOCK':
             try:
-                realtime_price = get_realtime_price(raw_sym)
+                if force_realtime_us_only:
+                    if currency == "USD":
+                        realtime_price = get_realtime_price(raw_sym)
+                else:
+                    realtime_price = get_realtime_price(raw_sym)
             except:
                 pass
 

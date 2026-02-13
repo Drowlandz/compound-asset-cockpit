@@ -1,8 +1,10 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
+from datetime import time as dt_time
 from pathlib import Path
 import html
+from zoneinfo import ZoneInfo
 import data_manager as db
 import config as cf
 import utils as ut
@@ -256,6 +258,21 @@ def money_col(label, fmt):
 def invalidate_portfolio_cache():
     st.session_state.pop('portfolio_cache', None)
     st.session_state.pop('last_update', None)
+
+
+def is_us_market_open_now(now_et=None):
+    """US market regular session: Mon-Fri 09:30-16:00 (America/New_York)."""
+    tz_et = ZoneInfo("America/New_York")
+    if now_et is None:
+        now_et = datetime.now(tz_et)
+    else:
+        now_et = now_et.astimezone(tz_et)
+
+    if now_et.weekday() >= 5:
+        return False
+    market_open = dt_time(9, 30)
+    market_close = dt_time(16, 0)
+    return market_open <= now_et.time() < market_close
 
 
 def get_donation_qr_candidates():
@@ -1089,350 +1106,405 @@ else:
 
 st.markdown("---")
 
+
 # --- 3. 个人资产计算 ---
-portfolio_df = db.get_portfolio_summary()
-total_invested = db.get_total_invested()
-cash_balance = db.get_cash_balance()
 
-market_val_usd = 0.0
-total_cost_usd = 0.0
-max_days_held = 0.0
-highest_badge_icon = "🌱"
-highest_badge_name = "新手"
+def _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled):
+    # --- 3. 个人资产计算 ---
+    portfolio_df = db.get_portfolio_summary()
+    total_invested = db.get_total_invested()
+    cash_balance = db.get_cash_balance()
 
-if not portfolio_df.empty:
-    portfolio_df = pf_service.filter_active_positions(portfolio_df)
+    market_val_usd = 0.0
+    total_cost_usd = 0.0
+    max_days_held = 0.0
+    highest_badge_icon = "🌱"
+    highest_badge_name = "新手"
 
-    has_cache = (
-        'last_update' in st.session_state
-        and 'portfolio_cache' in st.session_state
-    )
-    if not has_cache:
-        portfolio_df = ut.update_portfolio_valuation(portfolio_df)
-        st.session_state['portfolio_cache'] = portfolio_df
-        st.session_state['last_update'] = datetime.now()
-    else:
-        cached_df = st.session_state.get('portfolio_cache')
-        if cached_df is None:
-            portfolio_df = ut.update_portfolio_valuation(portfolio_df)
-            st.session_state['portfolio_cache'] = portfolio_df
-            st.session_state['last_update'] = datetime.now()
-        elif len(cached_df) != len(portfolio_df):
-            portfolio_df = ut.update_portfolio_valuation(portfolio_df)
-            st.session_state['portfolio_cache'] = portfolio_df
-            st.session_state['last_update'] = datetime.now()
+    if not portfolio_df.empty:
+        portfolio_df = pf_service.filter_active_positions(portfolio_df)
+
+        us_stock_mask = portfolio_df.get('Type', pd.Series(dtype=str)).eq('STOCK')
+        us_symbols = portfolio_df.loc[us_stock_mask, 'Raw Symbol'].astype(str).tolist() if us_stock_mask.any() else []
+        has_us_stock = any(ut.detect_currency(sym) == "USD" for sym in us_symbols)
+        us_market_open = is_us_market_open_now()
+        live_price_tick_active = bool(live_refresh_enabled and us_market_open and has_us_stock)
+
+        if live_price_tick_active:
+            st.caption("🟢 美股开盘中：现价每秒自动刷新")
+        elif live_refresh_enabled and us_market_open and not has_us_stock:
+            st.caption("🟡 美股开盘中：当前无美股持仓，未启用每秒刷新")
+        elif live_refresh_enabled:
+            st.caption("⚪ 美股休市中：自动刷新待开盘后启用")
         else:
-            portfolio_df = cached_df
+            st.caption("⚪ 已关闭每秒自动刷新")
 
-    max_days_held, highest_badge_icon, highest_badge_name = pf_service.get_highest_badge(
-        portfolio_df,
-        ut.get_badge_info
-    )
-
-st.markdown(
-    f"""<div class="badge-container"><div class="badge-icon">{highest_badge_icon}</div><div class="badge-text">{highest_badge_name}<div class="badge-label">坚持 {int(max_days_held)} 天</div></div></div>""",
-    unsafe_allow_html=True)
-
-metrics = pf_service.calculate_account_metrics(
-    portfolio_df=portfolio_df,
-    cash_balance=cash_balance,
-    total_invested=total_invested
-)
-market_val_usd = metrics['market_val_usd']
-total_cost_usd = metrics['total_cost_usd']
-final_net_asset = metrics['final_net_asset']
-base = metrics['base']
-pnl = metrics['pnl']
-ret_pct = metrics['ret_pct']
-holding_ratio_pct = metrics['holding_ratio_pct']
-lev_ratio = metrics['lev_ratio']
-cash_ratio = metrics['cash_ratio']
-top3_conc = metrics['top3_conc']
-
-# 保存快照
-save_today_snapshot(final_net_asset, base)
-
-# 核心指标看板
-with st.container():
-    c_net, c_hold = st.columns([1.25, 1.0])
-    with c_net:
-        st.markdown('<div class="net-asset-card">', unsafe_allow_html=True)
-        st.metric("💎 净资产 (Net Assets USD)", fmt_money(final_net_asset, 0), f"{ret_pct:+.2f}%")
-        st.markdown('</div>', unsafe_allow_html=True)
-    with c_hold:
-        st.markdown('<div class="holding-asset-card">', unsafe_allow_html=True)
-        if is_privacy_mode():
-            hold_delta = "占净资产 ****"
-        else:
-            ratio_text = f"{holding_ratio_pct:.1f}%" if abs(final_net_asset) > 1e-9 else "N/A"
-            hold_delta = f"占净资产 {ratio_text}"
-        st.metric("📦 持仓市值 (USD)", fmt_money(market_val_usd, 0), hold_delta, delta_color="off")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-st.write("")
-
-c1, c2, c3, c4 = st.columns(4)
-lev_delta, lev_color = pf_service.leverage_status(lev_ratio)
-with c1:
-    lev_metric_key = "lev_metric_ok" if lev_color != "inverse" else "lev_metric_bad"
-    with st.container(key=lev_metric_key):
-        st.metric("⚖️ 杠杆率", f"{lev_ratio:.2f}x", delta=lev_delta, delta_color=lev_color)
-
-# 集中度告警（类似杠杆率的做法）
-conc_delta, conc_color = pf_service.concentration_status(top3_conc)
-with c2:
-    conc_metric_key = "conc_metric_ok" if conc_color == "normal" else "conc_metric_bad"
-    with st.container(key=conc_metric_key):
-        st.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%", delta=conc_delta, delta_color=conc_color)
-
-privacy_mode = is_privacy_mode()
-cash_abs = abs(cash_balance)
-if cash_balance < -1e-9:
-    cash_title = "🏦 融资负债 (USD)"
-    cash_value = fmt_money(cash_abs, 0)
-    debt_ratio = (cash_abs / final_net_asset) if final_net_asset > 1e-9 else float("inf")
-    if debt_ratio <= 0.2:
-        debt_level = "低风险"
-        cash_container_key = "debt_metric_low_wrap"
-    elif debt_ratio <= 0.5:
-        debt_level = "中风险"
-        cash_container_key = "debt_metric_mid_wrap"
-    else:
-        debt_level = "高风险"
-        cash_container_key = "debt_metric_high_wrap"
-
-    if privacy_mode:
-        cash_delta = f"负债占净资产 **** · {debt_level}"
-    elif final_net_asset > 1e-9:
-        cash_delta = f"负债占净资产 {debt_ratio * 100:.1f}% · {debt_level}"
-    else:
-        cash_delta = f"负债占净资产 N/A · {debt_level}"
-elif cash_balance > 1e-9:
-    cash_title = "💵 现金余额 (USD)"
-    cash_value = fmt_money(cash_balance, 0)
-    cash_delta = "现金占净资产 ****" if privacy_mode else f"现金占净资产 {cash_ratio:.1f}%"
-    cash_container_key = "cash_metric_wrap"
-else:
-    cash_title = "💵 现金余额 (USD)"
-    cash_value = fmt_money(0, 0)
-    cash_delta = "现金占净资产 ****" if privacy_mode else "现金占净资产 0.0%"
-    cash_container_key = "cash_flat_metric_wrap"
-
-with c3:
-    with st.container(key=cash_container_key):
-        st.metric(
-            cash_title,
-            cash_value,
-            cash_delta,
-            delta_color="off",
-            help="正值代表现金余额，负值代表融资负债。",
+        has_cache = (
+            'last_update' in st.session_state
+            and 'portfolio_cache' in st.session_state
         )
-with c4:
-    profit_metric_key = "profit_metric_ok" if pnl >= 0 else "profit_metric_bad"
-    with st.container(key=profit_metric_key):
-        st.metric("🛡️ 总利润 (Profit)", fmt_money(pnl, 0), help="净资产 - 总投入本金")
-
-st.divider()
-
-# --- 4. 多维透视 (移到了中间) ---
-if not portfolio_df.empty or abs(cash_balance) > 1:
-    col_l, col_r = st.columns([1, 1.8])
-
-    with col_l:
-        st.caption("资产分布透视")
-        perspective_mode = st.radio(
-            "透视视图",
-            ["持仓", "赛道"],
-            horizontal=True,
-            label_visibility="collapsed",
-            key="asset_perspective_mode"
-        )
-
-        pie_data = pd.DataFrame()
-        name_col = "Symbol"
-        pie_palette = None
-        if perspective_mode == "持仓":
-            # 持仓恢复默认配色
-            pie_data = portfolio_df.copy()
-            if cash_balance > 0:
-                new_row = {'Symbol': 'CASH', 'Market Value': cash_balance}
-                pie_data = pd.concat([pie_data, pd.DataFrame([new_row])], ignore_index=True)
-            name_col = "Symbol"
-        else:
-            # 赛道使用中饱和离散配色（保留区分度，降低刺眼感）
-            pie_palette = [
-                "#D95D83", "#4FA8C8", "#D7B55B", "#7C6CB0", "#4FAFA4",
-                "#D07A4F", "#8F6FC3", "#5C8FD8", "#4FAF8F", "#D86D8C",
-                "#4D8FA8", "#D8B86A", "#89AF5A", "#B85D5D", "#7A6A96",
-                "#58A0B8", "#C66FA6", "#D39A6D", "#5E9F8E", "#6F8193"
-            ]
-            sector_df = portfolio_df.copy()
-            if 'Sector' not in sector_df.columns:
-                sector_df['Sector'] = 'N/A'
-            sector_df['Sector'] = sector_df['Sector'].fillna('N/A')
-            pie_data = sector_df.groupby('Sector', as_index=False)['Market Value'].sum()
-            pie_data.rename(columns={'Sector': 'Category'}, inplace=True)
-            if cash_balance > 0:
-                cash_row = pd.DataFrame([{'Category': '💵 现金', 'Market Value': cash_balance}])
-                pie_data = pd.concat([pie_data, cash_row], ignore_index=True)
-            name_col = "Category"
-
-        valid_pie = pie_data[pie_data['Market Value'] > 0.1]
-
-        if not valid_pie.empty:
-            ui.render_echarts_pie(
-                valid_pie,
-                name_col,
-                'Market Value',
-                key=f"chart_distribution_{perspective_mode}",
-                mask_value=privacy_mode,
-                color_palette=pie_palette
+        if live_price_tick_active:
+            portfolio_df = ut.update_portfolio_valuation(
+                portfolio_df,
+                force_realtime_us_only=True,
             )
+            st.session_state['portfolio_cache'] = portfolio_df
+            st.session_state['last_update'] = datetime.now()
+        elif not has_cache:
+            portfolio_df = ut.update_portfolio_valuation(portfolio_df)
+            st.session_state['portfolio_cache'] = portfolio_df
+            st.session_state['last_update'] = datetime.now()
         else:
-            st.info("无数据")
+            cached_df = st.session_state.get('portfolio_cache')
+            if cached_df is None:
+                portfolio_df = ut.update_portfolio_valuation(portfolio_df)
+                st.session_state['portfolio_cache'] = portfolio_df
+                st.session_state['last_update'] = datetime.now()
+            elif len(cached_df) != len(portfolio_df):
+                portfolio_df = ut.update_portfolio_valuation(portfolio_df)
+                st.session_state['portfolio_cache'] = portfolio_df
+                st.session_state['last_update'] = datetime.now()
+            else:
+                portfolio_df = cached_df
 
-    with col_r:
-        st.caption("持仓明细 (自动折算 USD)")
-        display_df = pf_service.build_holdings_display_df(portfolio_df, ut.get_badge_info)
-        display_table = display_df[
-            ["Sector", "Symbol", "Quantity", "Avg Cost", "Price", "Market Value", "Safety Margin", "Badge", "Days Held"]
-        ].copy()
-
-        column_defs = [
-            {"key": "Sector", "label": "赛道", "width": 108, "sensitive": False},
-            {"key": "Symbol", "label": "代码", "width": 96, "sensitive": False},
-            {"key": "Quantity", "label": "数量", "width": 82, "sensitive": True},
-            {"key": "Avg Cost", "label": "买入价", "width": 98, "sensitive": False},
-            {"key": "Price", "label": "现价", "width": 96, "sensitive": False},
-            {"key": "Market Value", "label": "市值", "width": 112, "sensitive": True},
-            {"key": "Safety Margin", "label": "安全边际", "width": 220, "sensitive": False},
-            {"key": "Badge", "label": "荣誉", "width": 148, "sensitive": False},
-            {"key": "Days Held", "label": "天数", "width": 74, "sensitive": False},
-        ]
-        visible_columns = [col for col in column_defs if not (privacy_mode and col["sensitive"])]
-
-        def fmt_int(value):
-            try:
-                return f"{float(value):.0f}"
-            except (TypeError, ValueError):
-                return ""
-
-        def fmt_money(value, decimals):
-            try:
-                return f"${float(value):,.{decimals}f}"
-            except (TypeError, ValueError):
-                return ""
-
-        colgroup_html = "<colgroup>" + "".join(
-            [f"<col style='width:{col['width']}px;'>" for col in visible_columns]
-        ) + "</colgroup>"
-        headers_html = "".join(
-            ["<th>{}</th>".format(html.escape(col["label"])) for col in visible_columns]
+        max_days_held, highest_badge_icon, highest_badge_name = pf_service.get_highest_badge(
+            portfolio_df,
+            ut.get_badge_info
         )
-        table_min_width = max(sum(col["width"] for col in visible_columns), 680)
 
-        table_rows = []
-        for _, row in display_table.iterrows():
-            cells = []
-            for col in visible_columns:
-                key = col["key"]
-                if key == "Safety Margin":
-                    try:
-                        safety_float = float(row.get("Safety Margin", 0) or 0)
-                    except (TypeError, ValueError):
-                        safety_float = 0.0
-                    bar_width = max(0.0, min(abs(safety_float), 100.0))
-                    sign_cls = "sm-pos" if safety_float > 0 else "sm-neg" if safety_float < 0 else "sm-zero"
-                    safety_label = f"{safety_float:+.1f}%"
-                    cells.append(
-                        "<td>"
-                        "<div class='sm-wrap'>"
-                        "<div class='sm-track'>"
-                        f"<div class='sm-fill {sign_cls}' style='width:{bar_width:.1f}%;'></div>"
-                        "</div>"
-                        f"<span class='sm-label {sign_cls}'>{safety_label}</span>"
-                        "</div>"
-                        "</td>"
-                    )
-                elif key in ("Quantity", "Days Held"):
-                    cells.append(f"<td>{fmt_int(row.get(key, ''))}</td>")
-                elif key in ("Avg Cost", "Price"):
-                    cells.append(f"<td>{fmt_money(row.get(key, ''), 2)}</td>")
-                elif key == "Market Value":
-                    cells.append(f"<td>{fmt_money(row.get(key, ''), 0)}</td>")
-                else:
-                    cells.append(f"<td>{html.escape(str(row.get(key, '')))}</td>")
+    st.markdown(
+        f"""<div class="badge-container"><div class="badge-icon">{highest_badge_icon}</div><div class="badge-text">{highest_badge_name}<div class="badge-label">坚持 {int(max_days_held)} 天</div></div></div>""",
+        unsafe_allow_html=True)
 
-            table_rows.append("<tr>" + "".join(cells) + "</tr>")
+    metrics = pf_service.calculate_account_metrics(
+        portfolio_df=portfolio_df,
+        cash_balance=cash_balance,
+        total_invested=total_invested
+    )
+    market_val_usd = metrics['market_val_usd']
+    total_cost_usd = metrics['total_cost_usd']
+    final_net_asset = metrics['final_net_asset']
+    base = metrics['base']
+    pnl = metrics['pnl']
+    ret_pct = metrics['ret_pct']
+    holding_ratio_pct = metrics['holding_ratio_pct']
+    lev_ratio = metrics['lev_ratio']
+    cash_ratio = metrics['cash_ratio']
+    top3_conc = metrics['top3_conc']
 
-        if dark_mode:
-            holdings_wrap_bg = "#0b1220"
-            holdings_wrap_border = "#334155"
-            holdings_head_bg = "#111827"
-            holdings_head_color = "#cbd5e1"
-            holdings_row_border = "#1f2937"
-            holdings_row_color = "#e2e8f0"
-            holdings_row_hover = "#111827"
-            holdings_track_bg = "#1e293b"
-            holdings_track_border = "#334155"
-            holdings_zero_color = "#94a3b8"
+    # 保存快照
+    save_today_snapshot(final_net_asset, base)
+
+    # 核心指标看板
+    with st.container():
+        c_net, c_hold = st.columns([1.25, 1.0])
+        with c_net:
+            st.markdown('<div class="net-asset-card">', unsafe_allow_html=True)
+            st.metric("💎 净资产 (Net Assets USD)", fmt_money(final_net_asset, 0), f"{ret_pct:+.2f}%")
+            st.markdown('</div>', unsafe_allow_html=True)
+        with c_hold:
+            st.markdown('<div class="holding-asset-card">', unsafe_allow_html=True)
+            if is_privacy_mode():
+                hold_delta = "占净资产 ****"
+            else:
+                ratio_text = f"{holding_ratio_pct:.1f}%" if abs(final_net_asset) > 1e-9 else "N/A"
+                hold_delta = f"占净资产 {ratio_text}"
+            st.metric("📦 持仓市值 (USD)", fmt_money(market_val_usd, 0), hold_delta, delta_color="off")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    st.write("")
+
+    c1, c2, c3, c4 = st.columns(4)
+    lev_delta, lev_color = pf_service.leverage_status(lev_ratio)
+    with c1:
+        lev_metric_key = "lev_metric_ok" if lev_color != "inverse" else "lev_metric_bad"
+        with st.container(key=lev_metric_key):
+            st.metric("⚖️ 杠杆率", f"{lev_ratio:.2f}x", delta=lev_delta, delta_color=lev_color)
+
+    # 集中度告警（类似杠杆率的做法）
+    conc_delta, conc_color = pf_service.concentration_status(top3_conc)
+    with c2:
+        conc_metric_key = "conc_metric_ok" if conc_color == "normal" else "conc_metric_bad"
+        with st.container(key=conc_metric_key):
+            st.metric("🎯 Top3 集中度", f"{top3_conc:.1f}%", delta=conc_delta, delta_color=conc_color)
+
+    privacy_mode = is_privacy_mode()
+    cash_abs = abs(cash_balance)
+    if cash_balance < -1e-9:
+        cash_title = "🏦 融资负债 (USD)"
+        cash_value = fmt_money(cash_abs, 0)
+        debt_ratio = (cash_abs / final_net_asset) if final_net_asset > 1e-9 else float("inf")
+        if debt_ratio <= 0.2:
+            debt_level = "低风险"
+            cash_container_key = "debt_metric_low_wrap"
+        elif debt_ratio <= 0.5:
+            debt_level = "中风险"
+            cash_container_key = "debt_metric_mid_wrap"
         else:
-            holdings_wrap_bg = "#ffffff"
-            holdings_wrap_border = "#e2e8f0"
-            holdings_head_bg = "#f8fafc"
-            holdings_head_color = "#334155"
-            holdings_row_border = "#f1f5f9"
-            holdings_row_color = "#0f172a"
-            holdings_row_hover = "#f8fafc"
-            holdings_track_bg = "#e2e8f0"
-            holdings_track_border = "#cbd5e1"
-            holdings_zero_color = "#64748b"
+            debt_level = "高风险"
+            cash_container_key = "debt_metric_high_wrap"
 
-        st.markdown(
-            f"""
-            <style>
-            .holdings-wrap {{ max-height: 450px; overflow: auto; border: 1px solid {holdings_wrap_border}; border-radius: 12px; background: {holdings_wrap_bg}; }}
-            .holdings-table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-            .holdings-table thead th {{
-                position: sticky; top: 0; z-index: 1;
-                background: {holdings_head_bg}; color: {holdings_head_color}; font-weight: 700;
-                text-align: left; padding: 10px 10px; border-bottom: 1px solid {holdings_wrap_border};
-            }}
-            .holdings-table tbody td {{
-                padding: 9px 10px; border-bottom: 1px solid {holdings_row_border}; color: {holdings_row_color}; white-space: nowrap;
-            }}
-            .holdings-table tbody tr:hover {{ background: {holdings_row_hover}; }}
-            .sm-wrap {{ display: flex; align-items: center; gap: 8px; width: 100%; }}
-            .sm-track {{
-                flex: 1 1 auto; min-width: 120px; height: 8px; border-radius: 999px; overflow: hidden;
-                background: {holdings_track_bg}; border: 1px solid {holdings_track_border};
-            }}
-            .sm-fill {{ height: 100%; border-radius: 999px; filter: saturate(0.72); }}
-            .sm-fill.sm-pos {{ background: linear-gradient(90deg, rgba(34, 197, 94, 0.82), rgba(22, 163, 74, 0.82)); }}
-            .sm-fill.sm-neg {{ background: linear-gradient(90deg, rgba(248, 113, 113, 0.82), rgba(220, 38, 38, 0.82)); }}
-            .sm-fill.sm-zero {{ background: rgba(148, 163, 184, 0.9); }}
-            .sm-label {{ font-weight: 400; font-size: 13px; min-width: 56px; text-align: right; }}
-            .sm-label.sm-pos {{ color: rgba(22, 163, 74, 0.86); }}
-            .sm-label.sm-neg {{ color: rgba(220, 38, 38, 0.86); }}
-            .sm-label.sm-zero {{ color: {holdings_zero_color}; }}
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
-        st.markdown(
-            "<div class='holdings-wrap'>"
-            f"<table class='holdings-table' style='min-width:{table_min_width}px;'>"
-            f"{colgroup_html}"
-            "<thead><tr>"
-            f"{headers_html}"
-            "</tr></thead>"
-            f"<tbody>{''.join(table_rows)}</tbody>"
-            "</table>"
-            "</div>",
-            unsafe_allow_html=True
-        )
+        if privacy_mode:
+            cash_delta = f"负债占净资产 **** · {debt_level}"
+        elif final_net_asset > 1e-9:
+            cash_delta = f"负债占净资产 {debt_ratio * 100:.1f}% · {debt_level}"
+        else:
+            cash_delta = f"负债占净资产 N/A · {debt_level}"
+    elif cash_balance > 1e-9:
+        cash_title = "💵 现金余额 (USD)"
+        cash_value = fmt_money(cash_balance, 0)
+        cash_delta = "现金占净资产 ****" if privacy_mode else f"现金占净资产 {cash_ratio:.1f}%"
+        cash_container_key = "cash_metric_wrap"
+    else:
+        cash_title = "💵 现金余额 (USD)"
+        cash_value = fmt_money(0, 0)
+        cash_delta = "现金占净资产 ****" if privacy_mode else "现金占净资产 0.0%"
+        cash_container_key = "cash_flat_metric_wrap"
 
-st.divider()
+    with c3:
+        with st.container(key=cash_container_key):
+            st.metric(
+                cash_title,
+                cash_value,
+                cash_delta,
+                delta_color="off",
+                help="正值代表现金余额，负值代表融资负债。",
+            )
+    with c4:
+        profit_metric_key = "profit_metric_ok" if pnl >= 0 else "profit_metric_bad"
+        with st.container(key=profit_metric_key):
+            st.metric("🛡️ 总利润 (Profit)", fmt_money(pnl, 0), help="净资产 - 总投入本金")
+
+    st.divider()
+
+    # --- 4. 多维透视 (移到了中间) ---
+    if not portfolio_df.empty or abs(cash_balance) > 1:
+        col_l, col_r = st.columns([1, 1.8])
+
+        with col_l:
+            st.caption("资产分布透视")
+            perspective_mode = st.radio(
+                "透视视图",
+                ["持仓", "赛道"],
+                horizontal=True,
+                label_visibility="collapsed",
+                key="asset_perspective_mode"
+            )
+
+            pie_data = pd.DataFrame()
+            name_col = "Symbol"
+            pie_palette = None
+            if perspective_mode == "持仓":
+                # 持仓恢复默认配色
+                pie_data = portfolio_df.copy()
+                if cash_balance > 0:
+                    new_row = {'Symbol': 'CASH', 'Market Value': cash_balance}
+                    pie_data = pd.concat([pie_data, pd.DataFrame([new_row])], ignore_index=True)
+                name_col = "Symbol"
+            else:
+                # 赛道使用中饱和离散配色（保留区分度，降低刺眼感）
+                pie_palette = [
+                    "#D95D83", "#4FA8C8", "#D7B55B", "#7C6CB0", "#4FAFA4",
+                    "#D07A4F", "#8F6FC3", "#5C8FD8", "#4FAF8F", "#D86D8C",
+                    "#4D8FA8", "#D8B86A", "#89AF5A", "#B85D5D", "#7A6A96",
+                    "#58A0B8", "#C66FA6", "#D39A6D", "#5E9F8E", "#6F8193"
+                ]
+                sector_df = portfolio_df.copy()
+                if 'Sector' not in sector_df.columns:
+                    sector_df['Sector'] = 'N/A'
+                sector_df['Sector'] = sector_df['Sector'].fillna('N/A')
+                pie_data = sector_df.groupby('Sector', as_index=False)['Market Value'].sum()
+                pie_data.rename(columns={'Sector': 'Category'}, inplace=True)
+                if cash_balance > 0:
+                    cash_row = pd.DataFrame([{'Category': '💵 现金', 'Market Value': cash_balance}])
+                    pie_data = pd.concat([pie_data, cash_row], ignore_index=True)
+                name_col = "Category"
+
+            valid_pie = pie_data[pie_data['Market Value'] > 0.1]
+
+            if not valid_pie.empty:
+                ui.render_echarts_pie(
+                    valid_pie,
+                    name_col,
+                    'Market Value',
+                    key=f"chart_distribution_{perspective_mode}",
+                    mask_value=privacy_mode,
+                    color_palette=pie_palette
+                )
+            else:
+                st.info("无数据")
+
+        with col_r:
+            st.caption("持仓明细 (自动折算 USD)")
+            display_df = pf_service.build_holdings_display_df(portfolio_df, ut.get_badge_info)
+            display_table = display_df[
+                ["Sector", "Symbol", "Quantity", "Avg Cost", "Price", "Market Value", "Safety Margin", "Badge", "Days Held"]
+            ].copy()
+
+            column_defs = [
+                {"key": "Sector", "label": "赛道", "width": 108, "sensitive": False},
+                {"key": "Symbol", "label": "代码", "width": 96, "sensitive": False},
+                {"key": "Quantity", "label": "数量", "width": 82, "sensitive": True},
+                {"key": "Avg Cost", "label": "买入价", "width": 98, "sensitive": False},
+                {"key": "Price", "label": "现价", "width": 96, "sensitive": False},
+                {"key": "Market Value", "label": "市值", "width": 112, "sensitive": True},
+                {"key": "Safety Margin", "label": "安全边际", "width": 220, "sensitive": False},
+                {"key": "Badge", "label": "荣誉", "width": 148, "sensitive": False},
+                {"key": "Days Held", "label": "天数", "width": 74, "sensitive": False},
+            ]
+            visible_columns = [col for col in column_defs if not (privacy_mode and col["sensitive"])]
+
+            def fmt_int(value):
+                try:
+                    return f"{float(value):.0f}"
+                except (TypeError, ValueError):
+                    return ""
+
+            def fmt_money_cell(value, decimals):
+                try:
+                    return f"${float(value):,.{decimals}f}"
+                except (TypeError, ValueError):
+                    return ""
+
+            colgroup_html = "<colgroup>" + "".join(
+                [f"<col style='width:{col['width']}px;'>" for col in visible_columns]
+            ) + "</colgroup>"
+            headers_html = "".join(
+                ["<th>{}</th>".format(html.escape(col["label"])) for col in visible_columns]
+            )
+            table_min_width = max(sum(col["width"] for col in visible_columns), 680)
+
+            table_rows = []
+            for _, row in display_table.iterrows():
+                cells = []
+                for col in visible_columns:
+                    key = col["key"]
+                    if key == "Safety Margin":
+                        try:
+                            safety_float = float(row.get("Safety Margin", 0) or 0)
+                        except (TypeError, ValueError):
+                            safety_float = 0.0
+                        bar_width = max(0.0, min(abs(safety_float), 100.0))
+                        sign_cls = "sm-pos" if safety_float > 0 else "sm-neg" if safety_float < 0 else "sm-zero"
+                        safety_label = f"{safety_float:+.1f}%"
+                        cells.append(
+                            "<td>"
+                            "<div class='sm-wrap'>"
+                            "<div class='sm-track'>"
+                            f"<div class='sm-fill {sign_cls}' style='width:{bar_width:.1f}%;'></div>"
+                            "</div>"
+                            f"<span class='sm-label {sign_cls}'>{safety_label}</span>"
+                            "</div>"
+                            "</td>"
+                        )
+                    elif key in ("Quantity", "Days Held"):
+                        cells.append(f"<td>{fmt_int(row.get(key, ''))}</td>")
+                    elif key in ("Avg Cost", "Price"):
+                        cells.append(f"<td>{fmt_money_cell(row.get(key, ''), 2)}</td>")
+                    elif key == "Market Value":
+                        cells.append(f"<td>{fmt_money_cell(row.get(key, ''), 0)}</td>")
+                    else:
+                        cells.append(f"<td>{html.escape(str(row.get(key, '')))}</td>")
+
+                table_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+            if dark_mode:
+                holdings_wrap_bg = "#0b1220"
+                holdings_wrap_border = "#334155"
+                holdings_head_bg = "#111827"
+                holdings_head_color = "#cbd5e1"
+                holdings_row_border = "#1f2937"
+                holdings_row_color = "#e2e8f0"
+                holdings_row_hover = "#111827"
+                holdings_track_bg = "#1e293b"
+                holdings_track_border = "#334155"
+                holdings_zero_color = "#94a3b8"
+            else:
+                holdings_wrap_bg = "#ffffff"
+                holdings_wrap_border = "#e2e8f0"
+                holdings_head_bg = "#f8fafc"
+                holdings_head_color = "#334155"
+                holdings_row_border = "#f1f5f9"
+                holdings_row_color = "#0f172a"
+                holdings_row_hover = "#f8fafc"
+                holdings_track_bg = "#e2e8f0"
+                holdings_track_border = "#cbd5e1"
+                holdings_zero_color = "#64748b"
+
+            st.markdown(
+                f"""
+                <style>
+                .holdings-wrap {{ max-height: 450px; overflow: auto; border: 1px solid {holdings_wrap_border}; border-radius: 12px; background: {holdings_wrap_bg}; }}
+                .holdings-table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+                .holdings-table thead th {{
+                    position: sticky; top: 0; z-index: 1;
+                    background: {holdings_head_bg}; color: {holdings_head_color}; font-weight: 700;
+                    text-align: left; padding: 10px 10px; border-bottom: 1px solid {holdings_wrap_border};
+                }}
+                .holdings-table tbody td {{
+                    padding: 9px 10px; border-bottom: 1px solid {holdings_row_border}; color: {holdings_row_color}; white-space: nowrap;
+                }}
+                .holdings-table tbody tr:hover {{ background: {holdings_row_hover}; }}
+                .sm-wrap {{ display: flex; align-items: center; gap: 8px; width: 100%; }}
+                .sm-track {{
+                    flex: 1 1 auto; min-width: 120px; height: 8px; border-radius: 999px; overflow: hidden;
+                    background: {holdings_track_bg}; border: 1px solid {holdings_track_border};
+                }}
+                .sm-fill {{ height: 100%; border-radius: 999px; filter: saturate(0.72); }}
+                .sm-fill.sm-pos {{ background: linear-gradient(90deg, rgba(34, 197, 94, 0.82), rgba(22, 163, 74, 0.82)); }}
+                .sm-fill.sm-neg {{ background: linear-gradient(90deg, rgba(248, 113, 113, 0.82), rgba(220, 38, 38, 0.82)); }}
+                .sm-fill.sm-zero {{ background: rgba(148, 163, 184, 0.9); }}
+                .sm-label {{ font-weight: 400; font-size: 13px; min-width: 56px; text-align: right; }}
+                .sm-label.sm-pos {{ color: rgba(22, 163, 74, 0.86); }}
+                .sm-label.sm-neg {{ color: rgba(220, 38, 38, 0.86); }}
+                .sm-label.sm-zero {{ color: {holdings_zero_color}; }}
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
+            st.markdown(
+                "<div class='holdings-wrap'>"
+                f"<table class='holdings-table' style='min-width:{table_min_width}px;'>"
+                f"{colgroup_html}"
+                "<thead><tr>"
+                f"{headers_html}"
+                "</tr></thead>"
+                f"<tbody>{''.join(table_rows)}</tbody>"
+                "</table>"
+                "</div>",
+                unsafe_allow_html=True
+            )
+
+    st.divider()
+
+
+@st.fragment(run_every="1s")
+def _render_portfolio_section_live(privacy_mode, dark_mode, live_refresh_enabled):
+    _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled)
+
+
+# 实时刷新开关（只控制估值区，不整页刷新）
+with st.container():
+    live_left, _ = st.columns([1.6, 3.4])
+    live_refresh_enabled = live_left.toggle(
+        "美股开盘时每秒自动刷新现价",
+        value=st.session_state.get("us_live_refresh_enabled", True),
+        key="us_live_refresh_enabled",
+        help="仅在美东时间工作日 09:30-16:00 生效。",
+    )
+
+_probe_df = db.get_portfolio_summary()
+_probe_has_us_stock = False
+if not _probe_df.empty:
+    _probe_us = _probe_df[_probe_df.get('Type', pd.Series(dtype=str)).eq('STOCK')]
+    if not _probe_us.empty:
+        _probe_has_us_stock = any(ut.detect_currency(str(sym)) == "USD" for sym in _probe_us['Raw Symbol'].astype(str).tolist())
+
+_live_price_tick_active = bool(live_refresh_enabled and is_us_market_open_now() and _probe_has_us_stock)
+if _live_price_tick_active:
+    _render_portfolio_section_live(privacy_mode, dark_mode, live_refresh_enabled)
+else:
+    _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled)
 
 # --- 5. 财富复利曲线 (极简版) ---
 if "chart_mode_toggle" not in st.session_state:
