@@ -230,6 +230,130 @@ def render_runtime_theme_css():
         div[data-testid="stExpander"] details summary p {
             color: #cbd5e1 !important;
         }
+        /* 夜间模式下优化“操作中心”弹窗（该弹窗包含 tabs） */
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) {
+            border: 1px solid #334155 !important;
+            background: linear-gradient(145deg, #0f172a 0%, #0b1220 100%) !important;
+            box-shadow: 0 24px 48px -22px rgba(2, 6, 23, 0.72) !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) h1,
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) h2,
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) h3,
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) p,
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) label,
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) span {
+            color: #e2e8f0 !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-baseweb="tab-list"] {
+            background: #0f172a !important;
+            border: 1px solid #334155 !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) button[role="tab"] {
+            border: 1px solid #334155 !important;
+            background: #0f172a !important;
+            color: #94a3b8 !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) button[role="tab"]:hover {
+            border-color: #475569 !important;
+            background: #1e293b !important;
+            color: #cbd5e1 !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) button[role="tab"][aria-selected="true"] {
+            border-color: #2563eb !important;
+            background: rgba(37, 99, 235, 0.18) !important;
+            color: #bfdbfe !important;
+            box-shadow: 0 2px 8px rgba(29, 78, 216, 0.25) !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) div[data-testid="stRadio"] > div[role="radiogroup"] {
+            background: #0b1220 !important;
+            border: 1px solid #334155 !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) {
+            background: #1e293b !important;
+            border: 1px solid #475569 !important;
+            box-shadow: none !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) > div {
+            color: #f8fafc !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-baseweb="input"],
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-baseweb="select"] > div {
+            border-color: #334155 !important;
+            background: #0b1220 !important;
+            color: #e2e8f0 !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-baseweb="input"] input,
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-baseweb="select"] input {
+            color: #e2e8f0 !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-baseweb="base-input"] {
+            background: #0b1220 !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-baseweb="base-input"] > input {
+            background: transparent !important;
+            color: #e2e8f0 !important;
+            -webkit-text-fill-color: #e2e8f0 !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-testid="stTextInput"] input,
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-testid="stNumberInput"] input,
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-testid="stDateInput"] input,
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-testid="stTextArea"] textarea,
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) input[type="text"],
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) input[type="number"],
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) input[type="date"],
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) textarea {
+            background: #0b1220 !important;
+            color: #e2e8f0 !important;
+            -webkit-text-fill-color: #e2e8f0 !important;
+            caret-color: #93c5fd !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-testid="stTextInput"] input:disabled,
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-testid="stNumberInput"] input:disabled,
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-testid="stDateInput"] input:disabled,
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) textarea:disabled {
+            background: #111827 !important;
+            color: #94a3b8 !important;
+            -webkit-text-fill-color: #94a3b8 !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-baseweb="input"] input::placeholder,
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-baseweb="select"] input::placeholder {
+            color: #64748b !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-baseweb="input"]:focus-within,
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) [data-baseweb="select"] > div:focus-within {
+            border-color: #2563eb !important;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25) !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) div.stButton > button {
+            border: 1px solid #475569 !important;
+            background: #1e293b !important;
+            color: #e2e8f0 !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) div.stButton > button:hover {
+            border-color: #64748b !important;
+            background: #334155 !important;
+            color: #f8fafc !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) div.stButton > button[data-testid="baseButton-primary"] {
+            border-color: #1d4ed8 !important;
+            background: #2563eb !important;
+            color: #eff6ff !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) div.stButton > button[data-testid="baseButton-primary"]:hover {
+            border-color: #1e40af !important;
+            background: #1d4ed8 !important;
+            color: #dbeafe !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) div.stButton > button[data-testid="baseButton-secondary"] {
+            border-color: #166534 !important;
+            background: #14532d !important;
+            color: #dcfce7 !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"]:has(button[role="tab"]) div.stButton > button[data-testid="baseButton-secondary"]:hover {
+            border-color: #22c55e !important;
+            background: #166534 !important;
+            color: #f0fdf4 !important;
+        }
         hr {
             border-color: #334155 !important;
         }
