@@ -1269,15 +1269,6 @@ def _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled):
         us_market_open = is_us_market_open_now()
         live_price_tick_active = bool(live_refresh_enabled and us_market_open and has_us_stock)
 
-        if live_price_tick_active:
-            st.caption("🟢 美股开盘中：现价每秒自动刷新")
-        elif live_refresh_enabled and us_market_open and not has_us_stock:
-            st.caption("🟡 美股开盘中：当前无美股持仓，未启用每秒刷新")
-        elif live_refresh_enabled:
-            st.caption("⚪ 美股休市中：自动刷新待开盘后启用")
-        else:
-            st.caption("⚪ 已关闭每秒自动刷新")
-
         has_cache = (
             'last_update' in st.session_state
             and 'portfolio_cache' in st.session_state
@@ -1613,15 +1604,8 @@ def _render_portfolio_section_live(privacy_mode, dark_mode, live_refresh_enabled
     _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled)
 
 
-# 实时刷新开关（只控制估值区，不整页刷新）
-with st.container():
-    live_left, _ = st.columns([1.6, 3.4])
-    live_refresh_enabled = live_left.toggle(
-        "美股开盘时每秒自动刷新现价",
-        value=st.session_state.get("us_live_refresh_enabled", True),
-        key="us_live_refresh_enabled",
-        help="仅在美东时间工作日 09:30-16:00 生效。",
-    )
+# 固定开启实时刷新（仅在美东时间工作日 09:30-16:00 且有美股持仓时生效）
+live_refresh_enabled = True
 
 _probe_df = db.get_portfolio_summary()
 _probe_has_us_stock = False
