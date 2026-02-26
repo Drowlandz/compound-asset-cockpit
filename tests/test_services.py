@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime
 
 import pandas as pd
 
@@ -82,6 +83,58 @@ class TestTransactionService(unittest.TestCase):
         value, err = tx_service.parse_float_input("-1", "金额", min_value=0.0)
         self.assertIsNone(value)
         self.assertIn("不能小于", err)
+
+    def test_parse_int_input_ok(self):
+        value, err = tx_service.parse_int_input("12", "执行期数", min_value=1)
+        self.assertIsNone(err)
+        self.assertEqual(value, 12)
+
+    def test_parse_int_input_invalid_decimal(self):
+        value, err = tx_service.parse_int_input("1.5", "执行期数", min_value=1)
+        self.assertIsNone(value)
+        self.assertIn("正整数", err)
+
+    def test_build_dca_dates_daily(self):
+        dates = tx_service.build_dca_dates(pd.to_datetime("2026-02-01").date(), "每天", 3)
+        self.assertEqual([d.isoformat() for d in dates], ["2026-02-01", "2026-02-02", "2026-02-03"])
+
+    def test_build_dca_dates_weekly(self):
+        dates = tx_service.build_dca_dates(pd.to_datetime("2026-02-01").date(), "每周", 3)
+        self.assertEqual([d.isoformat() for d in dates], ["2026-02-01", "2026-02-08", "2026-02-15"])
+
+    def test_build_dca_dates_monthly_eom(self):
+        dates = tx_service.build_dca_dates(pd.to_datetime("2026-01-31").date(), "每月", 3)
+        self.assertEqual([d.isoformat() for d in dates], ["2026-01-31", "2026-02-28", "2026-03-31"])
+
+    def test_is_dca_plan_due_true(self):
+        plan = {
+            "status": "ACTIVE",
+            "start_date": "2026-02-01",
+            "run_hour": 23,
+            "run_minute": 0,
+            "last_run_date": "",
+        }
+        self.assertTrue(tx_service.is_dca_plan_due(plan, datetime(2026, 2, 10, 23, 5)))
+
+    def test_is_dca_plan_due_false_before_time(self):
+        plan = {
+            "status": "ACTIVE",
+            "start_date": "2026-02-01",
+            "run_hour": 23,
+            "run_minute": 0,
+            "last_run_date": "",
+        }
+        self.assertFalse(tx_service.is_dca_plan_due(plan, datetime(2026, 2, 10, 22, 59)))
+
+    def test_is_dca_plan_due_false_already_ran(self):
+        plan = {
+            "status": "ACTIVE",
+            "start_date": "2026-02-01",
+            "run_hour": 23,
+            "run_minute": 0,
+            "last_run_date": "2026-02-10",
+        }
+        self.assertFalse(tx_service.is_dca_plan_due(plan, datetime(2026, 2, 10, 23, 10)))
 
 
 if __name__ == "__main__":

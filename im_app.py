@@ -546,73 +546,235 @@ def show_add_modal():
         st.caption("记录股票买卖，提交后自动刷新持仓。")
         t_type = st.radio("交易方向", ["BUY", "SELL"], horizontal=True)
         is_sell = "SELL" in t_type
-        current_holdings = db.get_stock_holdings_for_sell()
-        valid_holdings = []
-        selected_sell_symbol = ""
-        holding_qty = 0.0
-        if not current_holdings.empty:
-            current_holdings['Quantity'] = pd.to_numeric(current_holdings['Quantity'], errors='coerce').fillna(0.0)
-            valid_holdings = current_holdings[current_holdings['Quantity'] > 0.01]['Symbol'].astype(str).tolist()
+        is_auto_dca = False
+        if not is_sell:
+            buy_mode = st.radio("买入模式", ["普通买入", "自动定投"], horizontal=True, key="stock_buy_mode")
+            is_auto_dca = (buy_mode == "自动定投")
 
-        # 卖出时把选股放到 form 外，确保切换股票会即时刷新可卖数量
-        if is_sell:
-            c_sell, _ = st.columns([2, 2])
-            if valid_holdings:
-                selected_sell_symbol = c_sell.selectbox(
-                    "选择持仓股票",
-                    valid_holdings,
-                    key="sell_symbol_picker"
+        if is_auto_dca:
+            st.caption("开启后会在每天 23:00 自动按当时股价买入，直到你手动暂停。")
+            with st.form("dca_plan_form"):
+                c1, c2 = st.columns(2)
+                d_sym = c1.text_input("代码", "NVDA").upper()
+                d_amount_raw = c2.text_input("每日定投总金额", value="1000")
+                c3, c4 = st.columns(2)
+                d_fee_raw = c3.text_input("每次佣金", value="0")
+                d_start = c4.date_input("开始日期", date.today())
+                c5, c6 = st.columns(2)
+                c5.text_input("执行时间", value="每天 23:00", disabled=True)
+                d_note = c6.text_input("备注", placeholder="策略备注")
+
+                if st.form_submit_button("开启/更新定投", use_container_width=True, type="primary"):
+                    d_amount, err_amount = tx_service.parse_float_input(d_amount_raw, "每日定投总金额", min_value=0.01)
+                    d_fee, err_fee = tx_service.parse_float_input(d_fee_raw, "每次佣金", min_value=0.0)
+                    errors = [err for err in [err_amount, err_fee] if err]
+                    if not str(d_sym).strip():
+                        errors.append("股票代码不能为空")
+                    if not err_amount and not err_fee and d_amount <= d_fee:
+                        errors.append("每日定投总金额必须大于佣金")
+                    if errors:
+                        st.error("；".join(errors))
+                    else:
+                        try:
+                            plan_id, action = tx_service.open_dca_plan(
+                                symbol=d_sym,
+                                amount_per_day=float(d_amount),
+                                fee=float(d_fee),
+                                start_date=d_start,
+                                note=d_note,
+                                run_hour=23,
+                                run_minute=0,
+                            )
+                            st.cache_data.clear()
+                            invalidate_portfolio_cache()
+                            action_map = {"created": "已创建", "updated": "已更新", "resumed": "已恢复"}
+                            st.success(f"{action_map.get(action, '已保存')}定投计划 #{plan_id}")
+                            st.rerun()
+                        except ValueError as ex:
+                            st.error(str(ex))
+
+            st.divider()
+            st.caption("定投计划管理")
+            plan_df = db.get_dca_plan_overview()
+            if plan_df.empty:
+                st.info("暂无定投计划")
+            else:
+                for _, row in plan_df.iterrows():
+                    plan_id = int(row["id"])
+                    status = str(row.get("status", "PAUSED")).upper()
+                    run_hour = int(row.get("run_hour", 23) or 23)
+                    run_minute = int(row.get("run_minute", 0) or 0)
+                    run_text = f"{run_hour:02d}:{run_minute:02d}"
+                    last_run_date = str(row.get("last_run_date") or "-")
+                    lot_count = int(float(row.get("lot_count", 0) or 0))
+                    total_pnl = float(row.get("total_pnl", 0.0) or 0.0)
+                    roi_pct = float(row.get("roi_pct", 0.0) or 0.0)
+                    day_amount = float(row.get("amount", 0.0) or 0.0)
+                    if privacy_mode:
+                        amount_text = "****"
+                        pnl_text = "****"
+                        roi_text = "****"
+                    else:
+                        amount_text = f"${day_amount:,.2f}"
+                        pnl_text = f"${total_pnl:,.2f}"
+                        roi_text = f"{roi_pct:.2f}%"
+                    info_text = (
+                        f"#{plan_id} · {str(row.get('symbol', '')).upper()} · 每日 {amount_text} · {status} · "
+                        f"执行 {run_text} · 最近执行 {last_run_date} · lot {lot_count} 笔 · 累计收益 {pnl_text} ({roi_text})"
+                    )
+                    c_info, c_action, c_run = st.columns([6.5, 1.2, 1.3], vertical_alignment="center")
+                    c_info.caption(info_text)
+                    if status == "ACTIVE":
+                        if c_action.button("暂停", key=f"dca_pause_{plan_id}", use_container_width=True, type="secondary"):
+                            tx_service.pause_dca_plan(plan_id)
+                            st.rerun()
+                    else:
+                        if c_action.button("恢复", key=f"dca_resume_{plan_id}", use_container_width=True, type="secondary"):
+                            tx_service.resume_dca_plan(plan_id)
+                            st.rerun()
+
+                    if c_run.button("立即执行", key=f"dca_run_now_{plan_id}", use_container_width=True, type="secondary"):
+                        result = tx_service.run_dca_plan_now(plan_id)
+                        if result.get("status") == "success":
+                            st.cache_data.clear()
+                            invalidate_portfolio_cache()
+                            if privacy_mode:
+                                st.success("定投已执行")
+                            else:
+                                st.success(
+                                    f"定投已执行：约 {float(result.get('qty', 0.0)):.6f} 股 @ ${float(result.get('price', 0.0)):.4f}"
+                                )
+                            st.rerun()
+                        else:
+                            st.error(f"执行失败：{result.get('message', '未知错误')}")
+
+            st.divider()
+            st.caption("定投逐笔结算（每一笔定投独立核算）")
+            lot_df = db.get_dca_lot_report()
+            if lot_df.empty:
+                st.info("暂无定投 lot 记录")
+            else:
+                lot_view = lot_df[
+                    [
+                        "lot_id",
+                        "plan_id",
+                        "symbol",
+                        "buy_date",
+                        "buy_qty",
+                        "remaining_qty",
+                        "buy_amount",
+                        "current_price",
+                        "realized_pnl",
+                        "unrealized_pnl",
+                        "total_pnl",
+                        "roi_pct",
+                        "lot_status",
+                    ]
+                ].copy()
+                lot_view.rename(
+                    columns={
+                        "lot_id": "lot_id",
+                        "plan_id": "plan_id",
+                        "symbol": "代码",
+                        "buy_date": "买入日期",
+                        "buy_qty": "买入股数",
+                        "remaining_qty": "剩余股数",
+                        "buy_amount": "买入金额",
+                        "current_price": "当前价",
+                        "realized_pnl": "已实现收益",
+                        "unrealized_pnl": "未实现收益",
+                        "total_pnl": "总收益",
+                        "roi_pct": "收益率(%)",
+                        "lot_status": "状态",
+                    },
+                    inplace=True,
                 )
-                matched = current_holdings[current_holdings['Symbol'] == selected_sell_symbol]
-                if not matched.empty:
-                    holding_qty = float(matched['Quantity'].iloc[0])
-                if st.session_state.get("sell_qty_symbol") != selected_sell_symbol:
-                    st.session_state["sell_qty_raw"] = f"{holding_qty:g}"
-                    st.session_state["sell_qty_symbol"] = selected_sell_symbol
-                c_sell.caption(f"💡 可卖持仓: {holding_qty:g} 股")
-            else:
-                c_sell.warning("无持仓可卖")
-                st.session_state["sell_qty_raw"] = "0"
-                st.session_state["sell_qty_symbol"] = ""
-
-        with st.form("add_stock_form"):
-            c1, c2 = st.columns(2)
-            t_date = c1.date_input("日期", date.today())
-            if is_sell:
-                t_sym = selected_sell_symbol
-                c2.text_input("卖出代码", value=t_sym if t_sym else "-", disabled=True)
-            else:
-                t_sym = c2.text_input("代码", "NVDA").upper()
-
-            c3, c4 = st.columns(2)
-            if is_sell:
-                t_qty_raw = c3.text_input("数量 (股)", key="sell_qty_raw")
-            else:
-                t_qty_raw = c3.text_input("数量 (股)", value="100", key="buy_qty_raw")
-            t_price_raw = c4.text_input("成交单价", value="0")
-            c5, c6 = st.columns(2)
-            t_fee_raw = c5.text_input("佣金", value="0")
-            t_note = c6.text_input("笔记", placeholder="策略备注")
-
-            if st.form_submit_button("提交交易", use_container_width=True, type="primary"):
-                final_type = "SELL" if is_sell else "BUY"
-                t_qty, err_qty = tx_service.parse_float_input(t_qty_raw, "数量 (股)", min_value=0.01)
-                t_price, err_price = tx_service.parse_float_input(t_price_raw, "成交单价", min_value=0.0)
-                t_fee, err_fee = tx_service.parse_float_input(t_fee_raw, "佣金", min_value=0.0)
-                errors = [err for err in [err_qty, err_price, err_fee] if err]
-
-                if errors:
-                    st.error("；".join(errors))
-                elif is_sell and not t_sym:
-                    st.error("请选择要卖出的股票")
-                elif is_sell and t_qty > holding_qty:
-                    st.error(f"卖出数量超过持仓")
+                if privacy_mode:
+                    for col in ["买入金额", "当前价", "已实现收益", "未实现收益", "总收益", "收益率(%)"]:
+                        lot_view[col] = "****"
+                    st.dataframe(lot_view, hide_index=True, use_container_width=True)
                 else:
-                    tx_service.add_stock_transaction(t_date, t_sym, final_type, t_qty, t_price, t_fee, t_note)
-                    st.cache_data.clear()
-                    invalidate_portfolio_cache()
-                    st.success("已保存")
-                    st.rerun()
+                    st.dataframe(
+                        lot_view,
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "买入金额": money_col("买入金额", "$%.2f"),
+                            "当前价": money_col("当前价", "$%.4f"),
+                            "已实现收益": money_col("已实现收益", "$%.2f"),
+                            "未实现收益": money_col("未实现收益", "$%.2f"),
+                            "总收益": money_col("总收益", "$%.2f"),
+                            "收益率(%)": st.column_config.NumberColumn("收益率(%)", format="%.2f%%"),
+                        },
+                    )
+
+        else:
+            current_holdings = db.get_stock_holdings_for_sell()
+            valid_holdings = []
+            selected_sell_symbol = ""
+            holding_qty = 0.0
+            if not current_holdings.empty:
+                current_holdings['Quantity'] = pd.to_numeric(current_holdings['Quantity'], errors='coerce').fillna(0.0)
+                valid_holdings = current_holdings[current_holdings['Quantity'] > 0.01]['Symbol'].astype(str).tolist()
+
+            if is_sell:
+                c_sell, _ = st.columns([2, 2])
+                if valid_holdings:
+                    selected_sell_symbol = c_sell.selectbox(
+                        "选择持仓股票",
+                        valid_holdings,
+                        key="sell_symbol_picker"
+                    )
+                    matched = current_holdings[current_holdings['Symbol'] == selected_sell_symbol]
+                    if not matched.empty:
+                        holding_qty = float(matched['Quantity'].iloc[0])
+                    if st.session_state.get("sell_qty_symbol") != selected_sell_symbol:
+                        st.session_state["sell_qty_raw"] = f"{holding_qty:g}"
+                        st.session_state["sell_qty_symbol"] = selected_sell_symbol
+                    c_sell.caption(f"💡 可卖持仓: {holding_qty:g} 股")
+                else:
+                    c_sell.warning("无持仓可卖")
+                    st.session_state["sell_qty_raw"] = "0"
+                    st.session_state["sell_qty_symbol"] = ""
+
+            with st.form("add_stock_form"):
+                c1, c2 = st.columns(2)
+                t_date = c1.date_input("日期", date.today())
+                if is_sell:
+                    t_sym = selected_sell_symbol
+                    c2.text_input("卖出代码", value=t_sym if t_sym else "-", disabled=True)
+                else:
+                    t_sym = c2.text_input("代码", "NVDA").upper()
+
+                c3, c4 = st.columns(2)
+                if is_sell:
+                    t_qty_raw = c3.text_input("数量 (股)", key="sell_qty_raw")
+                else:
+                    t_qty_raw = c3.text_input("数量 (股)", value="100", key="buy_qty_raw")
+                t_price_raw = c4.text_input("成交单价", value="0")
+                c5, c6 = st.columns(2)
+                t_fee_raw = c5.text_input("佣金", value="0")
+                t_note = c6.text_input("笔记", placeholder="策略备注")
+
+                if st.form_submit_button("提交交易", use_container_width=True, type="primary"):
+                    final_type = "SELL" if is_sell else "BUY"
+                    t_qty, err_qty = tx_service.parse_float_input(t_qty_raw, "数量 (股)", min_value=0.01)
+                    t_price, err_price = tx_service.parse_float_input(t_price_raw, "成交单价", min_value=0.0)
+                    t_fee, err_fee = tx_service.parse_float_input(t_fee_raw, "佣金", min_value=0.0)
+                    errors = [err for err in [err_qty, err_price, err_fee] if err]
+
+                    if errors:
+                        st.error("；".join(errors))
+                    elif is_sell and not t_sym:
+                        st.error("请选择要卖出的股票")
+                    elif is_sell and t_qty > holding_qty:
+                        st.error("卖出数量超过持仓")
+                    else:
+                        tx_service.add_stock_transaction(t_date, t_sym, final_type, t_qty, t_price, t_fee, t_note)
+                        st.cache_data.clear()
+                        invalidate_portfolio_cache()
+                        st.success("已保存")
+                        st.rerun()
 
     # --- 期权 ---
     with tab2:
@@ -695,6 +857,11 @@ def show_add_modal():
                     o_strike, err_strike = tx_service.parse_float_input(o_strike_raw, "行权价", min_value=0.0)
                     if err_strike:
                         errors.append(err_strike)
+                    exp_ts = pd.to_datetime(o_exp, errors='coerce')
+                    if pd.isna(exp_ts):
+                        errors.append("到期日格式无效")
+                    elif exp_ts.date() <= o_date:
+                        errors.append("到期日必须晚于交易日期")
 
                 if errors:
                     st.error("；".join(errors))
@@ -1273,6 +1440,12 @@ def _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled):
             'last_update' in st.session_state
             and 'portfolio_cache' in st.session_state
         )
+        cached_has_na_sector = False
+        if has_cache:
+            cached_df = st.session_state.get('portfolio_cache')
+            if isinstance(cached_df, pd.DataFrame) and 'Sector' in cached_df.columns:
+                cached_has_na_sector = cached_df['Sector'].fillna('N/A').astype(str).eq('N/A').any()
+
         if live_price_tick_active:
             portfolio_df = ut.update_portfolio_valuation(
                 portfolio_df,
@@ -1280,7 +1453,7 @@ def _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled):
             )
             st.session_state['portfolio_cache'] = portfolio_df
             st.session_state['last_update'] = datetime.now()
-        elif not has_cache:
+        elif (not has_cache) or cached_has_na_sector:
             portfolio_df = ut.update_portfolio_valuation(portfolio_df)
             st.session_state['portfolio_cache'] = portfolio_df
             st.session_state['last_update'] = datetime.now()

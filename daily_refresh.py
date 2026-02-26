@@ -30,6 +30,7 @@ import data_manager as db
 from services.market_data_service import detect_currency as shared_detect_currency
 from services.market_data_service import fetch_realtime_price as shared_fetch_realtime_price
 from services.market_data_service import get_exchange_rates as shared_get_exchange_rates
+from services import transaction_service as tx_service
 
 # Keep scheduled logs clean when network is temporarily unavailable.
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
@@ -52,6 +53,11 @@ def parse_args() -> argparse.Namespace:
         "--no-price",
         action="store_true",
         help="Skip stock price refresh",
+    )
+    parser.add_argument(
+        "--no-dca",
+        action="store_true",
+        help="Skip auto DCA execution",
     )
     parser.add_argument(
         "--force-snapshot",
@@ -230,6 +236,21 @@ def main() -> int:
         price_count, _ = refresh_stock_prices(portfolio_df)
         log(f"Stock prices updated: {price_count}", args.quiet)
 
+    dca_summary = {"executed": 0, "skipped": 0, "failed": 0}
+    if not args.no_dca and args.snapshot_date == today_date:
+        dca_summary = tx_service.execute_due_dca_plans(datetime.now())
+        log(
+            f"DCA executed={dca_summary['executed']} skipped={dca_summary['skipped']} failed={dca_summary['failed']}",
+            args.quiet,
+        )
+        # 自动定投可能改变持仓与现金，重新获取用于快照计算。
+        portfolio_df = db.get_portfolio_summary()
+        if not portfolio_df.empty:
+            portfolio_df["Quantity"] = portfolio_df["Quantity"].apply(safe_float)
+            portfolio_df = portfolio_df[portfolio_df["Quantity"] > 0.01]
+    elif not args.no_dca:
+        log("Skip DCA execution for non-today snapshot date", args.quiet)
+
     price_map = load_price_map()
     net_asset, total_invested, market_val, cash = compute_net_asset(portfolio_df, price_map)
     existing_snapshot = load_snapshot_for_day(args.snapshot_date)
@@ -247,6 +268,8 @@ def main() -> int:
         f"invested={total_invested:.2f} "
         f"macro_updated={macro_count} "
         f"prices_updated={price_count} "
+        f"dca_executed={dca_summary['executed']} "
+        f"dca_failed={dca_summary['failed']} "
         f"snapshot_written={int(wrote_snapshot)}"
     )
     print(summary)

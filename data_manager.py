@@ -116,11 +116,87 @@ def init_db():
         )
     ''')
 
+    # 8. 定投计划
+    c.execute('''CREATE TABLE IF NOT EXISTS dca_plans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        amount REAL NOT NULL,
+        fee REAL DEFAULT 0,
+        run_hour INTEGER DEFAULT 23,
+        run_minute INTEGER DEFAULT 0,
+        start_date TEXT NOT NULL,
+        status TEXT DEFAULT 'ACTIVE',
+        note TEXT,
+        created_at TEXT,
+        updated_at TEXT,
+        last_run_at TEXT,
+        last_run_date TEXT
+    )''')
+
+    # 9. 定投执行记录
+    c.execute('''CREATE TABLE IF NOT EXISTS dca_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id INTEGER NOT NULL,
+        run_at TEXT NOT NULL,
+        run_date TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        price REAL,
+        amount REAL,
+        fee REAL,
+        quantity REAL,
+        tx_id INTEGER,
+        status TEXT NOT NULL,
+        run_mode TEXT DEFAULT 'SCHEDULED',
+        message TEXT
+    )''')
+    c.execute("CREATE INDEX IF NOT EXISTS idx_dca_runs_plan_date ON dca_runs(plan_id, run_date)")
+
+    # 10. 定投 lot（每笔独立）
+    c.execute('''CREATE TABLE IF NOT EXISTS dca_lots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id INTEGER NOT NULL,
+        tx_id INTEGER NOT NULL,
+        symbol TEXT NOT NULL,
+        buy_date TEXT NOT NULL,
+        buy_qty REAL NOT NULL,
+        buy_price REAL NOT NULL,
+        buy_fee REAL DEFAULT 0,
+        buy_amount REAL NOT NULL,
+        remaining_qty REAL NOT NULL,
+        realized_qty REAL DEFAULT 0,
+        realized_pnl REAL DEFAULT 0,
+        status TEXT DEFAULT 'OPEN',
+        closed_date TEXT
+    )''')
+    c.execute("CREATE INDEX IF NOT EXISTS idx_dca_lots_symbol_status ON dca_lots(symbol, status)")
+
+    # 11. 定投 lot 的卖出结算明细
+    c.execute('''CREATE TABLE IF NOT EXISTS dca_lot_realizations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        lot_id INTEGER NOT NULL,
+        sell_tx_id INTEGER NOT NULL,
+        sell_date TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        proceeds REAL NOT NULL,
+        cost REAL NOT NULL,
+        sell_fee_alloc REAL DEFAULT 0,
+        realized_pnl REAL NOT NULL
+    )''')
+    c.execute("CREATE INDEX IF NOT EXISTS idx_dca_realizations_lot ON dca_lot_realizations(lot_id)")
+
     # 兼容旧表结构：补 asset_category 列
     c.execute("PRAGMA table_info(stock_prices)")
     columns = [col[1] for col in c.fetchall()]
     if 'asset_category' not in columns:
         c.execute('ALTER TABLE stock_prices ADD COLUMN asset_category TEXT')
+
+    # 兼容旧 transactions：补 strategy 字段（用于识别自动定投交易）
+    c.execute("PRAGMA table_info(transactions)")
+    tx_columns = [col[1] for col in c.fetchall()]
+    if 'strategy_type' not in tx_columns:
+        c.execute("ALTER TABLE transactions ADD COLUMN strategy_type TEXT")
+    if 'strategy_id' not in tx_columns:
+        c.execute("ALTER TABLE transactions ADD COLUMN strategy_id INTEGER")
 
     # 自动修复/迁移
     try:
@@ -157,20 +233,31 @@ def get_macro_cache(key):
 
 def update_stock_meta(symbol, sector, currency='USD'):
     """更新股票元数据 (赛道/币种)"""
+    symbol_norm = str(symbol).strip()
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute("INSERT OR REPLACE INTO stock_meta (symbol, sector, currency, updated_at) VALUES (?, ?, ?, ?)",
-              (symbol, sector, currency, now))
+              (symbol_norm, sector, currency, now))
     conn.commit()
     conn.close()
 
 
 def get_stock_meta(symbol):
     """读取股票元数据"""
+    symbol_norm = str(symbol).strip()
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("SELECT sector, currency FROM stock_meta WHERE symbol=?", (symbol,))
+    c.execute(
+        """
+        SELECT sector, currency
+        FROM stock_meta
+        WHERE UPPER(symbol)=UPPER(?)
+        ORDER BY updated_at DESC
+        LIMIT 1
+        """,
+        (symbol_norm,),
+    )
     row = c.fetchone()
     conn.close()
     if row:
@@ -180,15 +267,44 @@ def get_stock_meta(symbol):
 
 # ================= 交易部分 (保持不变) =================
 
-def add_transaction(date, symbol, type, quantity, price, fee, note, asset_category='STOCK', multiplier=1, strike=None,
-                    expiration=None, option_type=None):
+def add_transaction(
+    date,
+    symbol,
+    type,
+    quantity,
+    price,
+    fee,
+    note,
+    asset_category='STOCK',
+    multiplier=1,
+    strike=None,
+    expiration=None,
+    option_type=None,
+    strategy_type=None,
+    strategy_id=None,
+):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute('''INSERT INTO transactions 
-        (date, symbol, type, quantity, price, fee, note, asset_category, multiplier, strike, expiration, option_type)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-              (date, symbol, type, quantity, price, fee, note, asset_category, multiplier, strike, expiration,
-               option_type))
+        (date, symbol, type, quantity, price, fee, note, asset_category, multiplier, strike, expiration, option_type, strategy_type, strategy_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+              (
+                  date,
+                  symbol,
+                  type,
+                  quantity,
+                  price,
+                  fee,
+                  note,
+                  asset_category,
+                  multiplier,
+                  strike,
+                  expiration,
+                  option_type,
+                  strategy_type,
+                  strategy_id,
+              ))
+    tx_id = c.lastrowid
 
     total_amt = quantity * price * multiplier
     if type == 'BUY':
@@ -199,6 +315,7 @@ def add_transaction(date, symbol, type, quantity, price, fee, note, asset_catego
     c.execute("UPDATE cash_balance SET balance = balance + ? WHERE id = 1", (change,))
     conn.commit()
     conn.close()
+    return tx_id
 
 
 def soft_delete_transaction(trans_id):
@@ -217,6 +334,10 @@ def soft_delete_transaction(trans_id):
         c.execute("UPDATE transactions SET is_deleted = 1 WHERE id = ?", (trans_id,))
     conn.commit()
     conn.close()
+    try:
+        rebuild_dca_lot_states()
+    except Exception:
+        pass
 
 
 def restore_transaction(trans_id):
@@ -235,6 +356,10 @@ def restore_transaction(trans_id):
         c.execute("UPDATE transactions SET is_deleted = 0 WHERE id = ?", (trans_id,))
     conn.commit()
     conn.close()
+    try:
+        rebuild_dca_lot_states()
+    except Exception:
+        pass
 
 
 def get_all_transactions(include_deleted=False):
@@ -245,6 +370,509 @@ def get_all_transactions(include_deleted=False):
     df = pd.read_sql_query(query, conn)
     conn.close()
     return df
+
+
+def _to_date_text(value):
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d")
+    if isinstance(value, date):
+        return value.strftime("%Y-%m-%d")
+    text = str(value).strip()
+    return text[:10] if len(text) >= 10 else text
+
+
+def _to_datetime_text(value):
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    text = str(value).strip()
+    if len(text) == 10:
+        return f"{text} 00:00:00"
+    return text
+
+
+# ================= 自动定投 =================
+
+def upsert_dca_plan(symbol, amount, fee, start_date, note="", run_hour=23, run_minute=0):
+    symbol_norm = str(symbol).upper().strip()
+    now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    start_text = _to_date_text(start_date)
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT id, status
+        FROM dca_plans
+        WHERE UPPER(symbol)=UPPER(?)
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (symbol_norm,),
+    )
+    row = c.fetchone()
+
+    if row:
+        plan_id, old_status = int(row[0]), str(row[1] or "PAUSED").upper()
+        c.execute(
+            """
+            UPDATE dca_plans
+            SET amount = ?, fee = ?, run_hour = ?, run_minute = ?, start_date = ?, note = ?, status = 'ACTIVE', updated_at = ?
+            WHERE id = ?
+            """,
+            (float(amount), float(fee), int(run_hour), int(run_minute), start_text, note, now_text, plan_id),
+        )
+        action = "resumed" if old_status == "PAUSED" else "updated"
+    else:
+        c.execute(
+            """
+            INSERT INTO dca_plans
+            (symbol, amount, fee, run_hour, run_minute, start_date, status, note, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?)
+            """,
+            (symbol_norm, float(amount), float(fee), int(run_hour), int(run_minute), start_text, note, now_text, now_text),
+        )
+        plan_id = int(c.lastrowid)
+        action = "created"
+
+    conn.commit()
+    conn.close()
+    return plan_id, action
+
+
+def get_dca_plan(plan_id):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT id, symbol, amount, fee, run_hour, run_minute, start_date, status, note, created_at, updated_at, last_run_at, last_run_date
+        FROM dca_plans
+        WHERE id = ?
+        """,
+        (int(plan_id),),
+    )
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "id": int(row[0]),
+        "symbol": row[1],
+        "amount": float(row[2] or 0.0),
+        "fee": float(row[3] or 0.0),
+        "run_hour": int(row[4] or 23),
+        "run_minute": int(row[5] or 0),
+        "start_date": row[6],
+        "status": str(row[7] or "PAUSED").upper(),
+        "note": row[8] or "",
+        "created_at": row[9],
+        "updated_at": row[10],
+        "last_run_at": row[11],
+        "last_run_date": row[12],
+    }
+
+
+def get_dca_plans(include_paused=True):
+    conn = sqlite3.connect(DB_NAME)
+    query = """
+        SELECT id, symbol, amount, fee, run_hour, run_minute, start_date, status, note, created_at, updated_at, last_run_at, last_run_date
+        FROM dca_plans
+    """
+    if not include_paused:
+        query += " WHERE status = 'ACTIVE'"
+    query += " ORDER BY CASE WHEN status = 'ACTIVE' THEN 0 ELSE 1 END, id DESC"
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    return df
+
+
+def set_dca_plan_status(plan_id, status):
+    now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        "UPDATE dca_plans SET status = ?, updated_at = ? WHERE id = ?",
+        (str(status).upper().strip(), now_text, int(plan_id)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def set_dca_plan_last_run(plan_id, run_date, run_at):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        """
+        UPDATE dca_plans
+        SET last_run_date = ?, last_run_at = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (_to_date_text(run_date), _to_datetime_text(run_at), datetime.now().strftime("%Y-%m-%d %H:%M:%S"), int(plan_id)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def has_success_dca_run(plan_id, run_date):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        "SELECT COUNT(1) FROM dca_runs WHERE plan_id = ? AND run_date = ? AND status = 'SUCCESS'",
+        (int(plan_id), _to_date_text(run_date)),
+    )
+    row = c.fetchone()
+    conn.close()
+    return bool(row and int(row[0]) > 0)
+
+
+def insert_dca_run(
+    plan_id,
+    run_at,
+    run_date,
+    symbol,
+    price,
+    amount,
+    fee,
+    quantity,
+    tx_id,
+    status,
+    run_mode="SCHEDULED",
+    message="",
+):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        """
+        INSERT INTO dca_runs
+        (plan_id, run_at, run_date, symbol, price, amount, fee, quantity, tx_id, status, run_mode, message)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            int(plan_id),
+            _to_datetime_text(run_at),
+            _to_date_text(run_date),
+            str(symbol).upper().strip(),
+            None if price is None else float(price),
+            None if amount is None else float(amount),
+            None if fee is None else float(fee),
+            None if quantity is None else float(quantity),
+            None if tx_id is None else int(tx_id),
+            str(status).upper().strip(),
+            str(run_mode).upper().strip(),
+            str(message or ""),
+        ),
+    )
+    run_id = int(c.lastrowid)
+    conn.commit()
+    conn.close()
+    return run_id
+
+
+def get_dca_runs(limit=100):
+    conn = sqlite3.connect(DB_NAME)
+    query = """
+        SELECT id, plan_id, run_at, run_date, symbol, price, amount, fee, quantity, tx_id, status, run_mode, message
+        FROM dca_runs
+        ORDER BY id DESC
+        LIMIT ?
+    """
+    df = pd.read_sql_query(query, conn, params=(int(limit),))
+    conn.close()
+    return df
+
+
+def add_dca_lot(plan_id, tx_id, symbol, buy_date, buy_qty, buy_price, buy_fee):
+    buy_qty_f = float(buy_qty)
+    buy_price_f = float(buy_price)
+    buy_fee_f = float(buy_fee or 0.0)
+    buy_amount = buy_qty_f * buy_price_f + buy_fee_f
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        """
+        INSERT INTO dca_lots
+        (plan_id, tx_id, symbol, buy_date, buy_qty, buy_price, buy_fee, buy_amount, remaining_qty, realized_qty, realized_pnl, status, closed_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'OPEN', NULL)
+        """,
+        (
+            int(plan_id),
+            int(tx_id),
+            str(symbol).upper().strip(),
+            _to_date_text(buy_date),
+            buy_qty_f,
+            buy_price_f,
+            buy_fee_f,
+            buy_amount,
+            buy_qty_f,
+        ),
+    )
+    lot_id = int(c.lastrowid)
+    conn.commit()
+    conn.close()
+    return lot_id
+
+
+def _settle_dca_sell_with_cursor(c, symbol, sell_tx_id, sell_date, sell_qty, sell_price, sell_fee):
+    symbol_norm = str(symbol).upper().strip()
+    sell_qty_f = float(sell_qty)
+    sell_price_f = float(sell_price)
+    sell_fee_f = float(sell_fee or 0.0)
+    if sell_qty_f <= 0:
+        return 0.0, 0.0
+
+    c.execute(
+        """
+        SELECT id, buy_qty, buy_price, buy_fee, remaining_qty
+        FROM dca_lots
+        WHERE UPPER(symbol)=UPPER(?) AND remaining_qty > 0.00000001
+        ORDER BY buy_date ASC, id ASC
+        """,
+        (symbol_norm,),
+    )
+    open_lots = c.fetchall()
+    if not open_lots:
+        return 0.0, 0.0
+
+    remaining_to_settle = sell_qty_f
+    settled_qty = 0.0
+    settled_pnl = 0.0
+    sell_date_text = _to_date_text(sell_date)
+
+    for lot_id, buy_qty, buy_price, buy_fee, remaining_qty in open_lots:
+        if remaining_to_settle <= 0.00000001:
+            break
+        lot_remaining = float(remaining_qty or 0.0)
+        if lot_remaining <= 0.00000001:
+            continue
+        alloc_qty = min(remaining_to_settle, lot_remaining)
+        if alloc_qty <= 0.00000001:
+            continue
+
+        buy_qty_f = float(buy_qty or 0.0)
+        buy_price_f = float(buy_price or 0.0)
+        buy_fee_f = float(buy_fee or 0.0)
+        if buy_qty_f > 0:
+            unit_cost = (buy_qty_f * buy_price_f + buy_fee_f) / buy_qty_f
+        else:
+            unit_cost = buy_price_f
+
+        proceeds = alloc_qty * sell_price_f
+        cost = alloc_qty * unit_cost
+        sell_fee_alloc = sell_fee_f * (alloc_qty / sell_qty_f)
+        realized = proceeds - cost - sell_fee_alloc
+
+        new_remaining = lot_remaining - alloc_qty
+        if new_remaining <= 0.00000001:
+            new_remaining = 0.0
+            lot_status = "CLOSED"
+            closed_date = sell_date_text
+        else:
+            lot_status = "OPEN"
+            closed_date = None
+
+        c.execute(
+            """
+            UPDATE dca_lots
+            SET remaining_qty = ?, realized_qty = COALESCE(realized_qty, 0) + ?, realized_pnl = COALESCE(realized_pnl, 0) + ?, status = ?, closed_date = ?
+            WHERE id = ?
+            """,
+            (new_remaining, alloc_qty, realized, lot_status, closed_date, int(lot_id)),
+        )
+        c.execute(
+            """
+            INSERT INTO dca_lot_realizations
+            (lot_id, sell_tx_id, sell_date, quantity, proceeds, cost, sell_fee_alloc, realized_pnl)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (int(lot_id), int(sell_tx_id), sell_date_text, alloc_qty, proceeds, cost, sell_fee_alloc, realized),
+        )
+
+        settled_qty += alloc_qty
+        settled_pnl += realized
+        remaining_to_settle -= alloc_qty
+
+    return settled_qty, settled_pnl
+
+
+def settle_dca_sell(symbol, sell_tx_id, sell_date, sell_qty, sell_price, sell_fee):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    settled_qty, settled_pnl = _settle_dca_sell_with_cursor(
+        c,
+        symbol,
+        sell_tx_id,
+        sell_date,
+        sell_qty,
+        sell_price,
+        sell_fee,
+    )
+    conn.commit()
+    conn.close()
+    return settled_qty, settled_pnl
+
+
+def rebuild_dca_lot_states():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    c.execute("DELETE FROM dca_lot_realizations")
+    c.execute("DELETE FROM dca_lots")
+
+    c.execute(
+        """
+        SELECT r.plan_id, r.tx_id, t.symbol, t.date, t.quantity, t.price, t.fee
+        FROM dca_runs r
+        JOIN transactions t ON t.id = r.tx_id
+        WHERE r.status = 'SUCCESS'
+          AND r.tx_id IS NOT NULL
+          AND t.is_deleted = 0
+          AND t.asset_category = 'STOCK'
+          AND t.type = 'BUY'
+        ORDER BY t.date ASC, t.id ASC
+        """
+    )
+    buy_rows = c.fetchall()
+    for plan_id, tx_id, symbol, buy_date, qty, price, fee in buy_rows:
+        qty_f = float(qty or 0.0)
+        price_f = float(price or 0.0)
+        fee_f = float(fee or 0.0)
+        amount_f = qty_f * price_f + fee_f
+        c.execute(
+            """
+            INSERT INTO dca_lots
+            (plan_id, tx_id, symbol, buy_date, buy_qty, buy_price, buy_fee, buy_amount, remaining_qty, realized_qty, realized_pnl, status, closed_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'OPEN', NULL)
+            """,
+            (int(plan_id), int(tx_id), str(symbol).upper().strip(), _to_date_text(buy_date), qty_f, price_f, fee_f, amount_f, qty_f),
+        )
+
+    c.execute(
+        """
+        SELECT id, date, symbol, quantity, price, fee
+        FROM transactions
+        WHERE is_deleted = 0
+          AND asset_category = 'STOCK'
+          AND type = 'SELL'
+        ORDER BY date ASC, id ASC
+        """
+    )
+    sell_rows = c.fetchall()
+    for sell_tx_id, sell_date, symbol, qty, price, fee in sell_rows:
+        _settle_dca_sell_with_cursor(
+            c,
+            symbol,
+            int(sell_tx_id),
+            sell_date,
+            float(qty or 0.0),
+            float(price or 0.0),
+            float(fee or 0.0),
+        )
+
+    conn.commit()
+    conn.close()
+
+
+def get_dca_lot_report(plan_id=None):
+    conn = sqlite3.connect(DB_NAME)
+    query = """
+        SELECT
+            l.id AS lot_id,
+            l.plan_id,
+            p.symbol,
+            p.status AS plan_status,
+            p.amount AS plan_amount,
+            p.fee AS plan_fee,
+            p.run_hour,
+            p.run_minute,
+            p.last_run_date,
+            l.buy_date,
+            l.buy_qty,
+            l.buy_price,
+            l.buy_fee,
+            l.buy_amount,
+            l.remaining_qty,
+            l.realized_qty,
+            l.realized_pnl,
+            l.status AS lot_status,
+            l.closed_date
+        FROM dca_lots l
+        LEFT JOIN dca_plans p ON p.id = l.plan_id
+    """
+    params = ()
+    if plan_id is not None:
+        query += " WHERE l.plan_id = ?"
+        params = (int(plan_id),)
+    query += " ORDER BY l.buy_date DESC, l.id DESC"
+    df = pd.read_sql_query(query, conn, params=params)
+    conn.close()
+    if df.empty:
+        return df
+
+    px = get_stock_price_map()
+    df['current_price'] = df['symbol'].astype(str).str.upper().map(px)
+    df['current_price'] = pd.to_numeric(df['current_price'], errors='coerce').fillna(pd.to_numeric(df['buy_price'], errors='coerce').fillna(0.0))
+    df['buy_qty'] = pd.to_numeric(df['buy_qty'], errors='coerce').fillna(0.0)
+    df['remaining_qty'] = pd.to_numeric(df['remaining_qty'], errors='coerce').fillna(0.0)
+    df['buy_amount'] = pd.to_numeric(df['buy_amount'], errors='coerce').fillna(0.0)
+    df['realized_pnl'] = pd.to_numeric(df['realized_pnl'], errors='coerce').fillna(0.0)
+    df['unit_cost'] = df.apply(lambda r: (r['buy_amount'] / r['buy_qty']) if r['buy_qty'] > 0 else 0.0, axis=1)
+    df['remaining_cost'] = df['unit_cost'] * df['remaining_qty']
+    df['market_value'] = df['current_price'] * df['remaining_qty']
+    df['unrealized_pnl'] = df['market_value'] - df['remaining_cost']
+    df['total_pnl'] = df['realized_pnl'] + df['unrealized_pnl']
+    df['roi_pct'] = df.apply(lambda r: (r['total_pnl'] / r['buy_amount'] * 100.0) if r['buy_amount'] > 0 else 0.0, axis=1)
+    return df
+
+
+def get_dca_plan_overview():
+    plans = get_dca_plans(include_paused=True)
+    if plans.empty:
+        return plans
+
+    lots = get_dca_lot_report()
+    if lots.empty:
+        plans = plans.copy()
+        plans['lot_count'] = 0
+        plans['total_buy_amount'] = 0.0
+        plans['remaining_qty'] = 0.0
+        plans['remaining_cost'] = 0.0
+        plans['market_value'] = 0.0
+        plans['realized_pnl'] = 0.0
+        plans['unrealized_pnl'] = 0.0
+        plans['total_pnl'] = 0.0
+        plans['roi_pct'] = 0.0
+        return plans
+
+    grouped = (
+        lots.groupby('plan_id', as_index=False)
+        .agg(
+            lot_count=('lot_id', 'count'),
+            total_buy_amount=('buy_amount', 'sum'),
+            remaining_qty=('remaining_qty', 'sum'),
+            remaining_cost=('remaining_cost', 'sum'),
+            market_value=('market_value', 'sum'),
+            realized_pnl=('realized_pnl', 'sum'),
+            unrealized_pnl=('unrealized_pnl', 'sum'),
+            total_pnl=('total_pnl', 'sum'),
+        )
+    )
+    grouped['roi_pct'] = grouped.apply(
+        lambda r: (r['total_pnl'] / r['total_buy_amount'] * 100.0) if r['total_buy_amount'] else 0.0,
+        axis=1,
+    )
+    merged = plans.merge(grouped, how='left', left_on='id', right_on='plan_id')
+    for col in [
+        'lot_count',
+        'total_buy_amount',
+        'remaining_qty',
+        'remaining_cost',
+        'market_value',
+        'realized_pnl',
+        'unrealized_pnl',
+        'total_pnl',
+        'roi_pct',
+    ]:
+        merged[col] = pd.to_numeric(merged[col], errors='coerce').fillna(0.0)
+    return merged
 
 
 def get_stock_holdings_for_sell():
