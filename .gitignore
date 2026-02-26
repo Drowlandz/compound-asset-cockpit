@@ -8,6 +8,8 @@ alerts/
 reports/
 logs/
 exports/
+*export*
+export*
 
 # Local private/experimental scripts
 report_generator.py
