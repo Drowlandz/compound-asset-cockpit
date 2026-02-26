@@ -1967,16 +1967,18 @@ with cal_left:
             return f"${val:+,.0f}"
         return f"{val:+.2f}%"
 
+    annualized_start = period_stats["annualized"]["start_date"]
     card_items = [
-        ("本周收益", period_stats["week"]),
-        ("本月收益", period_stats["month"]),
-        ("今年收益", period_stats["year"]),
+        ("本周收益", period_stats["week"], cal_metric),
+        ("本月收益", period_stats["month"], cal_metric),
+        ("今年收益", period_stats["year"], cal_metric),
+        (f"年化收益（自 {annualized_start:%Y-%m-%d}）", period_stats["annualized"], "%"),
     ]
 
-    for title, data in card_items:
-        card_val = data["amount"] if cal_metric == "$" else data["rate"]
+    for title, data, metric_mode in card_items:
+        card_val = data["amount"] if metric_mode == "$" else data["rate"]
         bg, border, text_color = _period_card_style(card_val)
-        value_text = _period_text(card_val, cal_metric)
+        value_text = _period_text(card_val, metric_mode)
         st.markdown(
             f"""
             <div class="pnl-side-card" style="border:1px solid {border}; background:{bg};">

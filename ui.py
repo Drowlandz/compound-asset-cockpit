@@ -320,21 +320,23 @@ def _prepare_daily_pnl(history_df):
     df['daily_rate'] = np.where(prev_asset > 0, (df['daily_amount'] / prev_asset) * 100.0, 0.0)
     df['daily_rate'] = df['daily_rate'].replace([np.inf, -np.inf], 0).fillna(0.0)
     df['day_key'] = df['date'].dt.strftime('%Y-%m-%d')
-    return df[['day_key', 'daily_amount', 'daily_rate', 'date']]
+    return df[['day_key', 'daily_amount', 'daily_rate', 'total_asset', 'date']]
 
 
 def get_pnl_period_stats(history_df):
     """
-    返回截至最新快照日的本周/本月/今年收益统计。
+    返回截至最新快照日的本周/本月/今年收益统计，以及固定起算日年化收益。
     返回结构:
     {
         "anchor_date": datetime.date,
         "week": {"amount": float, "rate": float},
         "month": {"amount": float, "rate": float},
         "year": {"amount": float, "rate": float},
+        "annualized": {"rate": float, "start_date": datetime.date},
     }
     """
     daily_df = _prepare_daily_pnl(history_df)
+    annualized_start = pd.Timestamp("2025-01-01")
     if daily_df.empty:
         today = datetime.now().date()
         return {
@@ -342,6 +344,7 @@ def get_pnl_period_stats(history_df):
             "week": {"amount": 0.0, "rate": 0.0},
             "month": {"amount": 0.0, "rate": 0.0},
             "year": {"amount": 0.0, "rate": 0.0},
+            "annualized": {"rate": 0.0, "start_date": annualized_start.date()},
         }
 
     latest_ts = pd.to_datetime(daily_df["date"]).max()
@@ -358,11 +361,39 @@ def get_pnl_period_stats(history_df):
         rate = float(((1 + (scoped["daily_rate"] / 100.0)).prod() - 1) * 100.0)
         return {"amount": amount, "rate": rate}
 
+    def calc_annualized(start_ts):
+        # 口径: 使用“当前总收益率”做年化，不用日收益连乘
+        # 总收益率 = (当前总资产 - 当前总本金) / 当前总本金
+        scoped_hist = history_df.copy()
+        scoped_hist["date"] = pd.to_datetime(scoped_hist["date"], errors="coerce")
+        scoped_hist["total_asset"] = pd.to_numeric(scoped_hist["total_asset"], errors="coerce")
+        scoped_hist["total_invested"] = pd.to_numeric(scoped_hist["total_invested"], errors="coerce")
+        scoped_hist = scoped_hist.dropna(subset=["date", "total_asset", "total_invested"]).sort_values("date")
+        scoped_hist = scoped_hist[scoped_hist["date"] >= start_ts]
+        if scoped_hist.empty:
+            return {"rate": 0.0, "start_date": start_ts.date()}
+
+        latest_row = scoped_hist.iloc[-1]
+        total_asset = float(latest_row["total_asset"])
+        total_invested = float(latest_row["total_invested"])
+        if total_invested <= 1.0:
+            return {"rate": 0.0, "start_date": start_ts.date()}
+
+        total_return_factor = total_asset / total_invested
+        end_date = datetime.now().date()
+        days = (end_date - start_ts.date()).days + 1
+        if total_return_factor <= 0 or days <= 0:
+            return {"rate": 0.0, "start_date": start_ts.date()}
+
+        annualized_rate = (pow(total_return_factor, 365.0 / float(days)) - 1.0) * 100.0
+        return {"rate": float(annualized_rate), "start_date": start_ts.date()}
+
     return {
         "anchor_date": anchor,
         "week": calc(week_start),
         "month": calc(month_start),
         "year": calc(year_start),
+        "annualized": calc_annualized(annualized_start),
     }
 
 
