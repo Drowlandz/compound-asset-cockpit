@@ -103,6 +103,7 @@ IM/
 ├── update_price.py     # 更新股票/期权现价
 ├── view_db.py          # 查看数据库内容
 ├── daily_refresh.py    # 离线自动日更
+├── export_data.py      # 导出分析数据（CSV）
 ├── scripts/
 │   └── install_daily_refresh_launchd.sh  # macOS 定时任务安装
 └── README.md           # 本文档
@@ -156,6 +157,51 @@ python3 daily_refresh.py --date 2026-02-10 --allow-historical-snapshot
 ```
 
 > 说明：这个脚本不依赖打开 Streamlit 页面，适合定时任务运行；默认只写“当天快照”。
+
+### export_data.py - 导出分析数据
+
+```bash
+# 导出到默认目录（./exports/im_export_时间戳）
+python3 export_data.py
+
+# 指定输出目录与标签
+python3 export_data.py --output-dir ./exports --tag weekly_review
+
+# 审计模式：包含回收站（软删除）交易
+python3 export_data.py --include-deleted
+```
+
+导出目录包含以下文件：
+
+- `transactions_detailed.csv`：交易明细（默认不含撤回/软删除交易；含签名数量、名义金额、现金影响、运行持仓）
+- `cash_ledger.csv`：资金流水（交易 + 本金流水 + 对账调整事件）
+- `holdings_snapshot.csv`：当前持仓快照（价格来源、赛道、未实现盈亏）
+- `sector_allocation.csv`：赛道分布（市值与占比）
+- `equity_curve.csv`：净值曲线（收益率、回撤、日变动）
+- `options_light.csv`：期权轻量汇总（开平数量、估算已实现收益、状态）
+- `export_manifest.json`：导出元数据（行数、现金对账结果）
+
+> 说明：`cash_ledger.csv` 可能包含 `RECONCILE_ADJUSTMENT` 事件，用于将历史流水与 `cash_balance` 对齐，便于后续分析口径一致。
+
+### export_unified_data.py - 单文件导出（统一存储）
+
+```bash
+# 导出为单个 JSON 文件（包含所有核心表）
+python3 export_unified_data.py
+
+# 指定输出文件路径
+python3 export_unified_data.py --output ./exports/my_unified_data.json
+```
+
+导出文件包含：
+
+- `transactions`
+- `fund_flows`
+- `daily_snapshots`
+- `cash_balance`
+- `macro_cache`
+- `stock_meta`
+- `stock_prices`
 
 ### macOS 定时任务（launchd）
 
