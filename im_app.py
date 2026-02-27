@@ -1653,8 +1653,7 @@ def _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled):
                 {"key": "Symbol", "label": "代码", "width": 96, "sensitive": False},
                 {"key": "Sector", "label": "赛道", "width": 108, "sensitive": False},
                 {"key": "Market Value", "label": "市值", "width": 112, "sensitive": True},
-                {"key": "Avg Cost", "label": "买入价", "width": 98, "sensitive": False},
-                {"key": "Price", "label": "现价", "width": 96, "sensitive": False},
+                {"key": "PriceVsCost", "label": "现价/买入价", "width": 164, "sensitive": False},
                 {"key": "Safety Margin", "label": "安全边际", "width": 220, "sensitive": False},
                 {"key": "Quantity", "label": "数量", "width": 82, "sensitive": True},
                 {"key": "Days Held", "label": "天数", "width": 74, "sensitive": False},
@@ -1715,8 +1714,10 @@ def _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled):
                         cells.append(f"<td>{fmt_qty(row.get(key, ''))}</td>")
                     elif key == "Days Held":
                         cells.append(f"<td>{fmt_int(row.get(key, ''))}</td>")
-                    elif key in ("Avg Cost", "Price"):
-                        cells.append(f"<td>{fmt_money_cell(row.get(key, ''), 2)}</td>")
+                    elif key == "PriceVsCost":
+                        price_txt = fmt_money_cell(row.get("Price", ""), 2)
+                        cost_txt = fmt_money_cell(row.get("Avg Cost", ""), 2)
+                        cells.append(f"<td>{price_txt}/{cost_txt}</td>")
                     elif key == "Market Value":
                         cells.append(f"<td>{fmt_money_cell(row.get(key, ''), 0)}</td>")
                     else:
