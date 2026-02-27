@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Offline daily refresh for IM.
+Offline daily refresh for Compound Asset Cockpit.
 
 What it does:
 1) Refreshes macro cache (VIX/TNX/HSI vol/CNH) when network is available.
@@ -37,7 +37,7 @@ logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="IM daily offline refresh")
+    parser = argparse.ArgumentParser(description="Compound Asset Cockpit daily offline refresh")
     parser.add_argument(
         "--date",
         dest="snapshot_date",
@@ -229,7 +229,7 @@ def main() -> int:
     portfolio_df = db.get_portfolio_summary()
     if not portfolio_df.empty:
         portfolio_df["Quantity"] = portfolio_df["Quantity"].apply(safe_float)
-        portfolio_df = portfolio_df[portfolio_df["Quantity"] > 0.01]
+        portfolio_df = portfolio_df[portfolio_df["Quantity"] >= 0.01]
 
     price_count = 0
     if not args.no_price:
@@ -247,7 +247,7 @@ def main() -> int:
         portfolio_df = db.get_portfolio_summary()
         if not portfolio_df.empty:
             portfolio_df["Quantity"] = portfolio_df["Quantity"].apply(safe_float)
-            portfolio_df = portfolio_df[portfolio_df["Quantity"] > 0.01]
+            portfolio_df = portfolio_df[portfolio_df["Quantity"] >= 0.01]
     elif not args.no_dca:
         log("Skip DCA execution for non-today snapshot date", args.quiet)
 

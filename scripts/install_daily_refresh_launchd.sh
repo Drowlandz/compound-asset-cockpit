@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LABEL="com.rowland.im.daily_refresh"
+LABEL="com.rowland.compound_asset_cockpit.daily_refresh"
+LEGACY_LABEL="com.rowland.im.daily_refresh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
@@ -10,6 +11,7 @@ RUN_MINUTE="${RUN_MINUTE:-0}"
 
 PLIST_DIR="${HOME}/Library/LaunchAgents"
 PLIST_PATH="${PLIST_DIR}/${LABEL}.plist"
+LEGACY_PLIST_PATH="${PLIST_DIR}/${LEGACY_LABEL}.plist"
 LOG_DIR="${PROJECT_DIR}/logs"
 
 mkdir -p "${PLIST_DIR}" "${LOG_DIR}"
@@ -51,6 +53,10 @@ cat > "${PLIST_PATH}" <<PLIST
 PLIST
 
 launchctl unload "${PLIST_PATH}" >/dev/null 2>&1 || true
+if [[ -f "${LEGACY_PLIST_PATH}" ]]; then
+  launchctl unload "${LEGACY_PLIST_PATH}" >/dev/null 2>&1 || true
+  rm -f "${LEGACY_PLIST_PATH}"
+fi
 launchctl load "${PLIST_PATH}"
 
 cat <<MSG

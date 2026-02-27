@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import calendar
+from decimal import Decimal
+from decimal import ROUND_HALF_UP
 from datetime import date as dt_date
 from datetime import datetime
 from datetime import timedelta
@@ -8,6 +10,8 @@ from typing import Dict, List, Optional, Tuple
 
 import data_manager as db
 from services.market_data_service import fetch_realtime_price
+
+STOCK_QTY_SCALE = Decimal("0.01")
 
 
 def parse_float_input(raw_text, field_label: str, min_value: Optional[float] = None) -> Tuple[Optional[float], Optional[str]]:
@@ -36,6 +40,10 @@ def parse_int_input(raw_text, field_label: str, min_value: Optional[int] = None)
     if min_value is not None and value < min_value:
         return None, f"{field_label} 不能小于 {min_value}"
     return value, None
+
+
+def round_stock_quantity(raw_qty: float) -> float:
+    return float(Decimal(str(raw_qty)).quantize(STOCK_QTY_SCALE, rounding=ROUND_HALF_UP))
 
 
 def _add_months(base_date: dt_date, months: int) -> dt_date:
@@ -67,11 +75,14 @@ def add_stock_transaction(
     t_fee: float,
     t_note: str,
 ) -> int:
+    qty_rounded = round_stock_quantity(t_qty)
+    if qty_rounded < 0.01:
+        raise ValueError("股票数量最少为 0.01 股")
     tx_id = db.add_transaction(
         t_date,
         t_sym,
         final_type,
-        t_qty,
+        qty_rounded,
         t_price,
         t_fee,
         t_note,
@@ -99,13 +110,15 @@ def add_stock_dca_transactions(
         raise ValueError("定投期数必须大于 0")
     if amount_per_period <= fee:
         raise ValueError("每期定投总金额必须大于佣金")
-    qty_per_period = (amount_per_period - fee) / price
+    qty_per_period = round_stock_quantity((amount_per_period - fee) / price)
+    if qty_per_period < 0.01:
+        raise ValueError("按当前金额与价格计算后每期不足 0.01 股，请提高金额")
     base_note = f"定投[{cadence}] 每期={amount_per_period:g}"
     for idx, d in enumerate(dca_dates, start=1):
         dca_note = f"{base_note} 第{idx}/{periods}期"
         final_note = dca_note if not str(note).strip() else f"{dca_note} | {note}"
         add_stock_transaction(d, symbol, "BUY", qty_per_period, price, fee, final_note)
-    total_qty = qty_per_period * len(dca_dates)
+    total_qty = round_stock_quantity(qty_per_period * len(dca_dates))
     return len(dca_dates), qty_per_period, total_qty, dca_dates[0], dca_dates[-1]
 
 
@@ -221,9 +234,9 @@ def _execute_dca_plan_once(plan: Dict, run_dt: datetime, run_mode: str, allow_sa
         db.insert_dca_run(plan_id, run_at, run_date, symbol, None, amount, fee, None, None, "FAILED", run_mode, msg)
         return {"status": "failed", "message": msg}
 
-    qty = (amount - fee) / float(price)
-    if qty <= 0.00000001:
-        msg = "按当前股价计算股数过小"
+    qty = round_stock_quantity((amount - fee) / float(price))
+    if qty < 0.01:
+        msg = "按当前股价计算后不足 0.01 股"
         db.insert_dca_run(plan_id, run_at, run_date, symbol, float(price), amount, fee, qty, None, "FAILED", run_mode, msg)
         return {"status": "failed", "message": msg}
 

@@ -42,6 +42,17 @@ class TestPortfolioService(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result.iloc[0]["Symbol"], "B")
 
+    def test_filter_active_positions_include_min_quantity(self):
+        df = pd.DataFrame(
+            [
+                {"Symbol": "A", "Quantity": 0.01},
+                {"Symbol": "B", "Quantity": 0.009},
+            ]
+        )
+        result = pf_service.filter_active_positions(df)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result.iloc[0]["Symbol"], "A")
+
     def test_calculate_account_metrics(self):
         portfolio_df = pd.DataFrame(
             [
@@ -93,6 +104,10 @@ class TestTransactionService(unittest.TestCase):
         value, err = tx_service.parse_int_input("1.5", "执行期数", min_value=1)
         self.assertIsNone(value)
         self.assertIn("正整数", err)
+
+    def test_round_stock_quantity(self):
+        self.assertAlmostEqual(tx_service.round_stock_quantity(1.005), 1.01)
+        self.assertAlmostEqual(tx_service.round_stock_quantity(1.004), 1.00)
 
     def test_build_dca_dates_daily(self):
         dates = tx_service.build_dca_dates(pd.to_datetime("2026-02-01").date(), "每天", 3)

@@ -28,10 +28,10 @@ def _build_frozen_entry_script():
     """
     global _TEMP_ENTRY_DIR
     if _TEMP_ENTRY_DIR and os.path.exists(_TEMP_ENTRY_DIR):
-        return os.path.join(_TEMP_ENTRY_DIR, "im_entry.py")
+        return os.path.join(_TEMP_ENTRY_DIR, "compound_asset_cockpit_entry.py")
 
-    temp_dir = tempfile.mkdtemp(prefix="im-entry-")
-    entry_script = os.path.join(temp_dir, "im_entry.py")
+    temp_dir = tempfile.mkdtemp(prefix="compound-asset-cockpit-entry-")
+    entry_script = os.path.join(temp_dir, "compound_asset_cockpit_entry.py")
     with open(entry_script, "w", encoding="utf-8") as f:
         f.write("import runpy\nrunpy.run_module('im_app', run_name='__main__')\n")
 
@@ -78,12 +78,17 @@ def run_streamlit_with_auto_stop(port=8501, idle_seconds=120, poll_seconds=3):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Run IM streamlit app")
+    parser = argparse.ArgumentParser(description="Run Compound Asset Cockpit streamlit app")
     parser.add_argument("--port", type=int, default=8501, help="Streamlit port")
     parser.add_argument(
         "--idle-seconds",
         type=int,
-        default=int(os.environ.get("IM_IDLE_SECONDS", "120")),
+        default=int(
+            os.environ.get(
+                "COMPOUND_ASSET_COCKPIT_IDLE_SECONDS",
+                os.environ.get("IM_IDLE_SECONDS", "120"),
+            )
+        ),
         help="Auto-stop idle timeout after browser disconnect",
     )
     parser.add_argument(

@@ -11,7 +11,7 @@ fi
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 VENV_DIR="${VENV_DIR:-$ROOT_DIR/.venv-macos-build}"
-APP_NAME="${APP_NAME:-IM}"
+APP_NAME="${APP_NAME:-Compound Asset Cockpit}"
 DIST_DIR="$ROOT_DIR/dist"
 BUILD_DIR="$ROOT_DIR/build"
 DMG_STAGING="$DIST_DIR/dmg-staging"

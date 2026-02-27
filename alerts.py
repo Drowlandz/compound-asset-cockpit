@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IM 告警系统
+Compound Asset Cockpit 告警系统
 监控持仓风险指标，根据阈值发出告警
 """
 
@@ -271,7 +271,7 @@ class AlertSystem:
         self.alerts.sort(key=lambda x: level_order.get(x.level, 99))
         
         print("=" * 50)
-        print("🚨 IM 风险告警报告")
+        print("🚨 Compound Asset Cockpit 风险告警报告")
         print("=" * 50)
         print(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"告警数量: {len(self.alerts)}\n")
@@ -292,7 +292,7 @@ class AlertSystem:
         level_order = {"CRITICAL": 0, "WARNING": 1, "INFO": 2}
         self.alerts.sort(key=lambda x: level_order.get(x.level, 99))
         
-        report = f"""# 🚨 IM 风险告警报告
+        report = f"""# 🚨 Compound Asset Cockpit 风险告警报告
 
 **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  
 **告警数量**: {len(self.alerts)}

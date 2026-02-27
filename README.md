@@ -91,7 +91,7 @@ python run_app.py --idle-seconds 120
 ## 📁 项目结构
 
 ```
-IM/
+Compound Asset Cockpit/
 ├── app.py              # 主应用入口
 ├── data_manager.py     # 数据库管理模块
 ├── utils.py            # 工具函数（价格获取、估值计算）
@@ -161,7 +161,7 @@ python3 daily_refresh.py --date 2026-02-10 --allow-historical-snapshot
 ### export_data.py - 导出分析数据
 
 ```bash
-# 导出到默认目录（./exports/im_export_时间戳）
+# 导出到默认目录（./exports/compound_asset_cockpit_export_时间戳）
 python3 export_data.py
 
 # 指定输出目录与标签
@@ -218,7 +218,7 @@ RUN_HOUR=18 RUN_MINUTE=5 ./scripts/install_daily_refresh_launchd.sh
 
 安装后会自动生成：
 
-- `~/Library/LaunchAgents/com.rowland.im.daily_refresh.plist`
+- `~/Library/LaunchAgents/com.rowland.compound_asset_cockpit.daily_refresh.plist`
 - 日志文件：`logs/daily_refresh.out.log`、`logs/daily_refresh.err.log`
 
 ### macOS 打包 DMG（开发者）
@@ -235,27 +235,28 @@ MACOS_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/bui
 ```
 
 > 注意：默认 ad-hoc 签名仅适合本机测试；对外分发建议使用 Developer ID 并完成 notarization。  
-> 若本机被 Gatekeeper 拦截，可执行：`xattr -dr com.apple.quarantine /Applications/IM.app`
+> 若本机被 Gatekeeper 拦截，可执行：`xattr -dr com.apple.quarantine "/Applications/Compound Asset Cockpit.app"`
 
 构建完成后产物在：
 
-- `dist/IM.app`
-- `dist/IM.dmg`
+- `dist/Compound Asset Cockpit.app`
+- `dist/Compound Asset Cockpit.dmg`
 
 ### macOS DMG 使用教程（普通用户）
 
-1. 从 GitHub Releases 下载最新版 `IM.dmg` 和 `IM.dmg.sha256`。  
-2. （可选）在终端校验完整性：`shasum -a 256 IM.dmg`，确认输出与 `IM.dmg.sha256` 一致。  
-3. 双击打开 `IM.dmg`，把 `IM.app` 拖到 `Applications`。  
-4. 第一次启动时，建议在“应用程序”里对 `IM.app` 右键选择“打开”。  
-5. 若出现“已损坏/无法验证开发者”等 Gatekeeper 拦截，执行：`xattr -dr com.apple.quarantine /Applications/IM.app` 后重试。  
+1. 从 GitHub Releases 下载最新版 `Compound Asset Cockpit.dmg` 和 `Compound Asset Cockpit.dmg.sha256`。  
+2. （可选）在终端校验完整性：`shasum -a 256 "Compound Asset Cockpit.dmg"`，确认输出与 `Compound Asset Cockpit.dmg.sha256` 一致。  
+3. 双击打开 `Compound Asset Cockpit.dmg`，把 `Compound Asset Cockpit.app` 拖到 `Applications`。  
+4. 第一次启动时，建议在“应用程序”里对 `Compound Asset Cockpit.app` 右键选择“打开”。  
+5. 若出现“已损坏/无法验证开发者”等 Gatekeeper 拦截，执行：`xattr -dr com.apple.quarantine "/Applications/Compound Asset Cockpit.app"` 后重试。  
 6. 启动成功后，浏览器会自动打开本地地址（默认 `http://localhost:8501`）。  
 
 说明：
 
 - 当前发布包为“0 `.py` 文件”封装，不包含项目源码明文文件。  
-- 应用数据默认保存在：`~/Library/Application Support/IM/investments.db`。  
-- 卸载应用时，删除 `/Applications/IM.app` 即可；如需彻底清理数据，再删除 `~/Library/Application Support/IM/`。  
+- 应用数据默认保存在：`~/Library/Application Support/Compound Asset Cockpit/investments.db`。  
+- 旧目录 `~/Library/Application Support/IM/investments.db` 会在首次启动新版本时自动迁移。  
+- 卸载应用时，删除 `/Applications/Compound Asset Cockpit.app` 即可；如需彻底清理数据，再删除 `~/Library/Application Support/Compound Asset Cockpit/`。  
 
 ## 💾 数据库结构
 

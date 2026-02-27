@@ -13,7 +13,7 @@ def filter_active_positions(portfolio_df: pd.DataFrame, min_quantity: float = 0.
 
     df = portfolio_df.copy()
     df["Quantity"] = pd.to_numeric(df.get("Quantity"), errors="coerce").fillna(0.0)
-    return df[df["Quantity"] > min_quantity].copy()
+    return df[df["Quantity"] >= min_quantity].copy()
 
 
 def get_highest_badge(
@@ -128,4 +128,8 @@ def build_holdings_display_df(
     ).fillna(0.0)
     df["Safety Margin"] = df.apply(_calc_safety_margin, axis=1)
     df["Badge"] = df["Days Held"].apply(lambda d: " ".join(badge_resolver(d)))
-    return df.sort_values("Market Value", ascending=False)
+    # Keep top-impact positions first and maintain stable ordering for ties.
+    df["Market Value"] = pd.to_numeric(df["Market Value"], errors="coerce").fillna(0.0)
+    df["_symbol_sort"] = df.get("Symbol", pd.Series(dtype=str)).astype(str)
+    df = df.sort_values(["Market Value", "_symbol_sort"], ascending=[False, True], kind="mergesort")
+    return df.drop(columns=["_symbol_sort"])

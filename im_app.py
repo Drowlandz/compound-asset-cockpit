@@ -14,7 +14,7 @@ from services.snapshot_service import save_today_snapshot
 from services import transaction_service as tx_service
 
 # ================= 1. 初始化 =================
-st.set_page_config(page_title="长期复利资产驾驶舱", layout="wide", page_icon="🔭")
+st.set_page_config(page_title="Compound Asset Cockpit", layout="wide", page_icon="🔭")
 db.init_db()
 st.markdown(cf.CUSTOM_CSS, unsafe_allow_html=True)
 
@@ -642,7 +642,7 @@ def show_add_modal():
                                 st.success("定投已执行")
                             else:
                                 st.success(
-                                    f"定投已执行：约 {float(result.get('qty', 0.0)):.6f} 股 @ ${float(result.get('price', 0.0)):.4f}"
+                                    f"定投已执行：约 {float(result.get('qty', 0.0)):.2f} 股 @ ${float(result.get('price', 0.0)):.4f}"
                                 )
                             st.rerun()
                         else:
@@ -699,6 +699,8 @@ def show_add_modal():
                         hide_index=True,
                         use_container_width=True,
                         column_config={
+                            "买入股数": st.column_config.NumberColumn("买入股数", format="%.2f"),
+                            "剩余股数": st.column_config.NumberColumn("剩余股数", format="%.2f"),
                             "买入金额": money_col("买入金额", "$%.2f"),
                             "当前价": money_col("当前价", "$%.4f"),
                             "已实现收益": money_col("已实现收益", "$%.2f"),
@@ -715,7 +717,7 @@ def show_add_modal():
             holding_qty = 0.0
             if not current_holdings.empty:
                 current_holdings['Quantity'] = pd.to_numeric(current_holdings['Quantity'], errors='coerce').fillna(0.0)
-                valid_holdings = current_holdings[current_holdings['Quantity'] > 0.01]['Symbol'].astype(str).tolist()
+                valid_holdings = current_holdings[current_holdings['Quantity'] >= 0.01]['Symbol'].astype(str).tolist()
 
             if is_sell:
                 c_sell, _ = st.columns([2, 2])
@@ -729,9 +731,9 @@ def show_add_modal():
                     if not matched.empty:
                         holding_qty = float(matched['Quantity'].iloc[0])
                     if st.session_state.get("sell_qty_symbol") != selected_sell_symbol:
-                        st.session_state["sell_qty_raw"] = f"{holding_qty:g}"
+                        st.session_state["sell_qty_raw"] = f"{holding_qty:.2f}"
                         st.session_state["sell_qty_symbol"] = selected_sell_symbol
-                    c_sell.caption(f"💡 可卖持仓: {holding_qty:g} 股")
+                    c_sell.caption(f"💡 可卖持仓: {holding_qty:.2f} 股")
                 else:
                     c_sell.warning("无持仓可卖")
                     st.session_state["sell_qty_raw"] = "0"
@@ -761,13 +763,15 @@ def show_add_modal():
                     t_qty, err_qty = tx_service.parse_float_input(t_qty_raw, "数量 (股)", min_value=0.01)
                     t_price, err_price = tx_service.parse_float_input(t_price_raw, "成交单价", min_value=0.0)
                     t_fee, err_fee = tx_service.parse_float_input(t_fee_raw, "佣金", min_value=0.0)
+                    if err_qty is None and t_qty is not None:
+                        t_qty = tx_service.round_stock_quantity(t_qty)
                     errors = [err for err in [err_qty, err_price, err_fee] if err]
 
                     if errors:
                         st.error("；".join(errors))
                     elif is_sell and not t_sym:
                         st.error("请选择要卖出的股票")
-                    elif is_sell and t_qty > holding_qty:
+                    elif is_sell and t_qty > (holding_qty + 1e-9):
                         st.error("卖出数量超过持仓")
                     else:
                         tx_service.add_stock_transaction(t_date, t_sym, final_type, t_qty, t_price, t_fee, t_note)
@@ -1051,6 +1055,15 @@ def render_transaction_flow(privacy_mode, show_title=True):
     deleted_trans = db.get_deleted_transactions_last_7_days()
 
     latest_active = None
+    def _format_tx_qty(row):
+        qty = pd.to_numeric(row.get('quantity'), errors='coerce')
+        if pd.isna(qty):
+            return "-"
+        asset_category = str(row.get('asset_category', '') or '').upper()
+        if asset_category == "STOCK":
+            return f"{float(qty):.2f}"
+        return f"{float(qty):g}"
+
     def _render_tx_rows_with_undo(df_tx, key_prefix, show_symbol=False):
         if df_tx is None or df_tx.empty:
             st.caption("无记录")
@@ -1063,8 +1076,7 @@ def render_transaction_flow(privacy_mode, show_title=True):
             date_text = tx_date.strftime("%Y-%m-%d") if pd.notna(tx_date) else "-"
             symbol_text = f"{str(row.get('symbol', '-')).upper()} · " if show_symbol else ""
             tx_type = str(row.get('type', '-'))
-            qty = pd.to_numeric(row.get('quantity'), errors='coerce')
-            qty_text = f"{float(qty):g}" if pd.notna(qty) else "-"
+            qty_text = _format_tx_qty(row)
             if privacy_mode:
                 price_text = "****"
             else:
@@ -1105,8 +1117,7 @@ def render_transaction_flow(privacy_mode, show_title=True):
             d = "-"
         symbol = str(row.get('symbol', '-'))
         tx_type = str(row.get('type', '-'))
-        qty = pd.to_numeric(row.get('quantity'), errors='coerce')
-        qty_text = f"{float(qty):g}" if pd.notna(qty) else "-"
+        qty_text = _format_tx_qty(row)
         if privacy_mode:
             price_text = "****"
         else:
@@ -1164,7 +1175,7 @@ def render_transaction_flow(privacy_mode, show_title=True):
             else:
                 portfolio_df_local['Market Value'] = 0.0
 
-            valid_p = portfolio_df_local[portfolio_df_local['Quantity'] > 0.01]
+            valid_p = portfolio_df_local[portfolio_df_local['Quantity'] >= 0.01]
             if not valid_p.empty:
                 active_holdings = dict(zip(valid_p['Symbol'], valid_p['Market Value']))
 
@@ -1219,7 +1230,7 @@ daily_quote = cf.get_random_quote()
 st.markdown(f"""<div class="quote-card">“{daily_quote[0]}”<div class="quote-author">—— {daily_quote[1]}</div></div>""",
             unsafe_allow_html=True)
 
-st.subheader("🔭 长期复利资产驾驶舱")
+st.subheader("🔭 Compound Asset Cockpit")
 
 # --- 2. 宏观模块 ---
 macro_data = ut.get_global_macro_data()
@@ -1573,6 +1584,9 @@ def _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled):
 
     # --- 4. 多维透视 (移到了中间) ---
     if not portfolio_df.empty or abs(cash_balance) > 1:
+        snapshot_df = portfolio_df.copy(deep=True)
+        snapshot_cash_balance = float(cash_balance or 0.0)
+
         col_l, col_r = st.columns([1, 1.8])
 
         with col_l:
@@ -1590,9 +1604,9 @@ def _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled):
             pie_palette = None
             if perspective_mode == "持仓":
                 # 持仓恢复默认配色
-                pie_data = portfolio_df.copy()
-                if cash_balance > 0:
-                    new_row = {'Symbol': 'CASH', 'Market Value': cash_balance}
+                pie_data = snapshot_df.copy()
+                if snapshot_cash_balance > 0:
+                    new_row = {'Symbol': 'CASH', 'Market Value': snapshot_cash_balance}
                     pie_data = pd.concat([pie_data, pd.DataFrame([new_row])], ignore_index=True)
                 name_col = "Symbol"
             else:
@@ -1603,14 +1617,14 @@ def _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled):
                     "#4D8FA8", "#D8B86A", "#89AF5A", "#B85D5D", "#7A6A96",
                     "#58A0B8", "#C66FA6", "#D39A6D", "#5E9F8E", "#6F8193"
                 ]
-                sector_df = portfolio_df.copy()
+                sector_df = snapshot_df.copy()
                 if 'Sector' not in sector_df.columns:
                     sector_df['Sector'] = 'N/A'
                 sector_df['Sector'] = sector_df['Sector'].fillna('N/A')
                 pie_data = sector_df.groupby('Sector', as_index=False)['Market Value'].sum()
                 pie_data.rename(columns={'Sector': 'Category'}, inplace=True)
-                if cash_balance > 0:
-                    cash_row = pd.DataFrame([{'Category': '💵 现金', 'Market Value': cash_balance}])
+                if snapshot_cash_balance > 0:
+                    cash_row = pd.DataFrame([{'Category': '💵 现金', 'Market Value': snapshot_cash_balance}])
                     pie_data = pd.concat([pie_data, cash_row], ignore_index=True)
                 name_col = "Category"
 
@@ -1632,25 +1646,31 @@ def _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled):
             st.caption("持仓明细 (自动折算 USD)")
             display_df = pf_service.build_holdings_display_df(portfolio_df, ut.get_badge_info)
             display_table = display_df[
-                ["Sector", "Symbol", "Quantity", "Avg Cost", "Price", "Market Value", "Safety Margin", "Badge", "Days Held"]
+                ["Symbol", "Sector", "Market Value", "Price", "Avg Cost", "Safety Margin", "Quantity", "Days Held", "Badge"]
             ].copy()
 
             column_defs = [
-                {"key": "Sector", "label": "赛道", "width": 108, "sensitive": False},
                 {"key": "Symbol", "label": "代码", "width": 96, "sensitive": False},
-                {"key": "Quantity", "label": "数量", "width": 82, "sensitive": True},
-                {"key": "Avg Cost", "label": "买入价", "width": 98, "sensitive": False},
-                {"key": "Price", "label": "现价", "width": 96, "sensitive": False},
+                {"key": "Sector", "label": "赛道", "width": 108, "sensitive": False},
                 {"key": "Market Value", "label": "市值", "width": 112, "sensitive": True},
+                {"key": "Price", "label": "现价", "width": 96, "sensitive": False},
+                {"key": "Avg Cost", "label": "买入价", "width": 98, "sensitive": False},
                 {"key": "Safety Margin", "label": "安全边际", "width": 220, "sensitive": False},
-                {"key": "Badge", "label": "荣誉", "width": 148, "sensitive": False},
+                {"key": "Quantity", "label": "数量", "width": 82, "sensitive": True},
                 {"key": "Days Held", "label": "天数", "width": 74, "sensitive": False},
+                {"key": "Badge", "label": "荣誉", "width": 148, "sensitive": False},
             ]
             visible_columns = [col for col in column_defs if not (privacy_mode and col["sensitive"])]
 
             def fmt_int(value):
                 try:
                     return f"{float(value):.0f}"
+                except (TypeError, ValueError):
+                    return ""
+
+            def fmt_qty(value):
+                try:
+                    return f"{float(value):.2f}"
                 except (TypeError, ValueError):
                     return ""
 
@@ -1691,7 +1711,9 @@ def _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled):
                             "</div>"
                             "</td>"
                         )
-                    elif key in ("Quantity", "Days Held"):
+                    elif key == "Quantity":
+                        cells.append(f"<td>{fmt_qty(row.get(key, ''))}</td>")
+                    elif key == "Days Held":
                         cells.append(f"<td>{fmt_int(row.get(key, ''))}</td>")
                     elif key in ("Avg Cost", "Price"):
                         cells.append(f"<td>{fmt_money_cell(row.get(key, ''), 2)}</td>")

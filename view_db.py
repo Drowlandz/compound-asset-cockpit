@@ -197,7 +197,7 @@ def view_quick_summary():
     cursor = conn.cursor()
     
     print("\n" + "=" * 50)
-    print("  📊 IM 投资数据库 - 快速概览")
+    print("  📊 Compound Asset Cockpit 投资数据库 - 快速概览")
     print("=" * 50)
     
     # 统计各表数据量

@@ -3,21 +3,25 @@ import pandas as pd
 import os
 import shutil
 import sys
+from decimal import Decimal
+from decimal import ROUND_HALF_UP
 from datetime import date, datetime
 
 # === 路径修正逻辑 ===
-APP_NAME = "IM"
+APP_NAME = "Compound Asset Cockpit"
+LEGACY_APP_NAME = "IM"
 
 
-def _default_frozen_data_dir():
+def _default_frozen_data_dir(app_name=None):
+    app_dir_name = app_name or APP_NAME
     home = os.path.expanduser("~")
     if sys.platform == "darwin":
-        return os.path.join(home, "Library", "Application Support", APP_NAME)
+        return os.path.join(home, "Library", "Application Support", app_dir_name)
     if os.name == "nt":
         base = os.environ.get("APPDATA", os.path.join(home, "AppData", "Roaming"))
-        return os.path.join(base, APP_NAME)
+        return os.path.join(base, app_dir_name)
     base = os.environ.get("XDG_DATA_HOME", os.path.join(home, ".local", "share"))
-    return os.path.join(base, APP_NAME)
+    return os.path.join(base, app_dir_name)
 
 
 def _resolve_db_name():
@@ -25,23 +29,53 @@ def _resolve_db_name():
         base_dir = os.path.dirname(os.path.abspath(__file__))
         return os.path.join(base_dir, "investments.db")
 
-    data_dir = _default_frozen_data_dir()
+    data_dir = _default_frozen_data_dir(APP_NAME)
     try:
         os.makedirs(data_dir, exist_ok=True)
     except OSError:
         data_dir = os.path.dirname(sys.executable)
 
     target_db = os.path.join(data_dir, "investments.db")
-    legacy_db = os.path.join(os.path.dirname(sys.executable), "investments.db")
-    if legacy_db != target_db and os.path.exists(legacy_db) and not os.path.exists(target_db):
-        try:
-            shutil.copy2(legacy_db, target_db)
-        except OSError:
-            pass
+    legacy_candidates = [
+        os.path.join(_default_frozen_data_dir(LEGACY_APP_NAME), "investments.db"),
+        os.path.join(os.path.dirname(sys.executable), "investments.db"),
+    ]
+    if not os.path.exists(target_db):
+        for legacy_db in legacy_candidates:
+            if legacy_db == target_db or not os.path.exists(legacy_db):
+                continue
+            try:
+                shutil.copy2(legacy_db, target_db)
+                break
+            except OSError:
+                continue
     return target_db
 
 
 DB_NAME = _resolve_db_name()
+
+
+def _normalize_transaction_type(tx_type):
+    return str(tx_type or "").strip().upper()
+
+
+def _normalize_asset_category(asset_category):
+    category = str(asset_category or "STOCK").strip().upper()
+    return category if category else "STOCK"
+
+
+def _safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _safe_int(value, default=0):
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return int(default)
 
 
 def init_db():
@@ -283,34 +317,50 @@ def add_transaction(
     strategy_type=None,
     strategy_id=None,
 ):
+    tx_type = _normalize_transaction_type(type)
+    if tx_type not in ("BUY", "SELL"):
+        raise ValueError(f"不支持的交易方向: {type}")
+
+    category = _normalize_asset_category(asset_category)
+    symbol_text = str(symbol).strip().upper()
+    date_text = _to_date_text(date)
+    qty_value = _safe_float(quantity)
+    if category == "STOCK":
+        qty_value = float(Decimal(str(qty_value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    price_value = _safe_float(price)
+    fee_value = _safe_float(fee)
+    multiplier_value = _safe_int(multiplier, default=1) or 1
+    option_type_norm = str(option_type).strip().upper() if option_type is not None else None
+    strategy_type_norm = str(strategy_type).strip().upper() if strategy_type is not None else None
+
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute('''INSERT INTO transactions 
         (date, symbol, type, quantity, price, fee, note, asset_category, multiplier, strike, expiration, option_type, strategy_type, strategy_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
               (
-                  date,
-                  symbol,
-                  type,
-                  quantity,
-                  price,
-                  fee,
+                  date_text,
+                  symbol_text,
+                  tx_type,
+                  qty_value,
+                  price_value,
+                  fee_value,
                   note,
-                  asset_category,
-                  multiplier,
+                  category,
+                  multiplier_value,
                   strike,
                   expiration,
-                  option_type,
-                  strategy_type,
+                  option_type_norm,
+                  strategy_type_norm,
                   strategy_id,
               ))
     tx_id = c.lastrowid
 
-    total_amt = quantity * price * multiplier
-    if type == 'BUY':
-        change = -(total_amt + fee)
+    total_amt = qty_value * price_value * multiplier_value
+    if tx_type == 'BUY':
+        change = -(total_amt + fee_value)
     else:
-        change = (total_amt - fee)
+        change = (total_amt - fee_value)
 
     c.execute("UPDATE cash_balance SET balance = balance + ? WHERE id = 1", (change,))
     conn.commit()
@@ -323,13 +373,14 @@ def soft_delete_transaction(trans_id):
     c = conn.cursor()
     c.execute("SELECT type, quantity, price, fee, multiplier, is_deleted FROM transactions WHERE id = ?", (trans_id,))
     row = c.fetchone()
-    if row and row[5] == 0:
+    if row and int(row[5] or 0) == 0:
         t_type, qty, price, fee, mult, _ = row
-        total_amt = qty * price * mult
-        if t_type == 'BUY':
-            rollback = total_amt + fee
+        t_type_norm = _normalize_transaction_type(t_type)
+        total_amt = _safe_float(qty) * _safe_float(price) * _safe_int(mult, default=1)
+        if t_type_norm == 'BUY':
+            rollback = total_amt + _safe_float(fee)
         else:
-            rollback = -(total_amt - fee)
+            rollback = -(total_amt - _safe_float(fee))
         c.execute("UPDATE cash_balance SET balance = balance + ? WHERE id = 1", (rollback,))
         c.execute("UPDATE transactions SET is_deleted = 1 WHERE id = ?", (trans_id,))
     conn.commit()
@@ -343,15 +394,16 @@ def soft_delete_transaction(trans_id):
 def restore_transaction(trans_id):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("SELECT type, quantity, price, fee, multiplier FROM transactions WHERE id = ?", (trans_id,))
+    c.execute("SELECT type, quantity, price, fee, multiplier, is_deleted FROM transactions WHERE id = ?", (trans_id,))
     row = c.fetchone()
-    if row:
-        t_type, qty, price, fee, mult = row
-        total_amt = qty * price * mult
-        if t_type == 'BUY':
-            change = -(total_amt + fee)
+    if row and int(row[5] or 0) == 1:
+        t_type, qty, price, fee, mult, _ = row
+        t_type_norm = _normalize_transaction_type(t_type)
+        total_amt = _safe_float(qty) * _safe_float(price) * _safe_int(mult, default=1)
+        if t_type_norm == 'BUY':
+            change = -(total_amt + _safe_float(fee))
         else:
-            change = (total_amt - fee)
+            change = (total_amt - _safe_float(fee))
         c.execute("UPDATE cash_balance SET balance = balance + ? WHERE id = 1", (change,))
         c.execute("UPDATE transactions SET is_deleted = 0 WHERE id = ?", (trans_id,))
     conn.commit()
@@ -881,17 +933,21 @@ def get_stock_holdings_for_sell():
     if df.empty:
         return pd.DataFrame(columns=['Symbol', 'Quantity'])
 
-    df = df[df['asset_category'] == 'STOCK'].copy()
+    df['asset_category_norm'] = df['asset_category'].apply(_normalize_asset_category)
+    df = df[df['asset_category_norm'] == 'STOCK'].copy()
     if df.empty:
         return pd.DataFrame(columns=['Symbol', 'Quantity'])
 
+    df['type_norm'] = df['type'].apply(_normalize_transaction_type)
+    df['quantity_num'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0.0)
+    df['symbol_norm'] = df['symbol'].astype(str).str.strip().str.upper()
     df['signed_qty'] = df.apply(
-        lambda r: float(r['quantity']) if r['type'] == 'BUY' else -float(r['quantity']),
+        lambda r: r['quantity_num'] if r['type_norm'] == 'BUY' else (-r['quantity_num'] if r['type_norm'] == 'SELL' else 0.0),
         axis=1
     )
-    summary = df.groupby('symbol', as_index=False)['signed_qty'].sum()
-    summary = summary[summary['signed_qty'] > 0.01].copy()
-    summary.rename(columns={'symbol': 'Symbol', 'signed_qty': 'Quantity'}, inplace=True)
+    summary = df.groupby('symbol_norm', as_index=False)['signed_qty'].sum()
+    summary = summary[summary['signed_qty'] >= 0.01].copy()
+    summary.rename(columns={'symbol_norm': 'Symbol', 'signed_qty': 'Quantity'}, inplace=True)
     return summary.sort_values('Symbol').reset_index(drop=True)
 
 
@@ -901,21 +957,26 @@ def get_open_option_positions():
     if df.empty:
         return pd.DataFrame(columns=['symbol', 'expiration', 'option_type', 'strike', 'quantity'])
 
-    df = df[df['asset_category'] == 'OPTION'].copy()
+    df['asset_category_norm'] = df['asset_category'].apply(_normalize_asset_category)
+    df = df[df['asset_category_norm'] == 'OPTION'].copy()
     if df.empty:
         return pd.DataFrame(columns=['symbol', 'expiration', 'option_type', 'strike', 'quantity'])
 
+    df['type_norm'] = df['type'].apply(_normalize_transaction_type)
+    df['quantity_num'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0.0)
+    df['symbol_norm'] = df['symbol'].astype(str).str.strip().str.upper()
+    df['option_type_norm'] = df['option_type'].astype(str).str.strip().str.upper()
     df['signed_qty'] = df.apply(
-        lambda r: float(r['quantity']) if r['type'] == 'BUY' else -float(r['quantity']),
+        lambda r: r['quantity_num'] if r['type_norm'] == 'BUY' else (-r['quantity_num'] if r['type_norm'] == 'SELL' else 0.0),
         axis=1
     )
 
     grouped = (
-        df.groupby(['symbol', 'expiration', 'option_type', 'strike'], as_index=False, dropna=False)['signed_qty']
+        df.groupby(['symbol_norm', 'expiration', 'option_type_norm', 'strike'], as_index=False, dropna=False)['signed_qty']
         .sum()
     )
-    grouped = grouped[grouped['signed_qty'] > 0.01].copy()
-    grouped.rename(columns={'signed_qty': 'quantity'}, inplace=True)
+    grouped = grouped[grouped['signed_qty'] >= 0.01].copy()
+    grouped.rename(columns={'symbol_norm': 'symbol', 'option_type_norm': 'option_type', 'signed_qty': 'quantity'}, inplace=True)
     return grouped.sort_values(['symbol', 'expiration', 'option_type', 'strike']).reset_index(drop=True)
 
 
@@ -1005,10 +1066,19 @@ def get_active_stock_holdings():
     """返回当前股票持仓聚合（排除 OPTION 和已删除）。"""
     conn = sqlite3.connect(DB_NAME)
     query = """
-        SELECT symbol, asset_category, SUM(quantity) as qty
+        SELECT
+            UPPER(TRIM(symbol)) AS symbol,
+            UPPER(TRIM(asset_category)) AS asset_category,
+            SUM(
+                CASE
+                    WHEN UPPER(TRIM(type)) = 'BUY' THEN quantity
+                    WHEN UPPER(TRIM(type)) = 'SELL' THEN -quantity
+                    ELSE 0
+                END
+            ) as qty
         FROM transactions
-        WHERE is_deleted = 0 AND asset_category != 'OPTION'
-        GROUP BY symbol
+        WHERE is_deleted = 0 AND UPPER(TRIM(asset_category)) != 'OPTION'
+        GROUP BY UPPER(TRIM(symbol)), UPPER(TRIM(asset_category))
         HAVING qty > 0
     """
     df = pd.read_sql_query(query, conn)
@@ -1040,10 +1110,24 @@ def get_current_prices_with_holdings():
                COALESCE(t.qty, 0) as quantity, COALESCE(t.category, 'UNKNOWN') as category
         FROM stock_prices sp
         LEFT JOIN (
-            SELECT symbol, SUM(quantity) as qty, asset_category as category
+            SELECT
+                UPPER(TRIM(symbol)) as symbol,
+                SUM(
+                    CASE
+                        WHEN UPPER(TRIM(type)) = 'BUY' THEN quantity
+                        WHEN UPPER(TRIM(type)) = 'SELL' THEN -quantity
+                        ELSE 0
+                    END
+                ) as qty,
+                CASE
+                    WHEN SUM(CASE WHEN UPPER(TRIM(asset_category)) = 'OPTION' THEN 1 ELSE 0 END) > 0
+                         AND SUM(CASE WHEN UPPER(TRIM(asset_category)) = 'STOCK' THEN 1 ELSE 0 END) > 0
+                    THEN 'MIXED'
+                    ELSE MAX(UPPER(TRIM(asset_category)))
+                END as category
             FROM transactions
             WHERE is_deleted = 0
-            GROUP BY symbol
+            GROUP BY UPPER(TRIM(symbol))
         ) t ON sp.symbol = t.symbol
         WHERE COALESCE(t.qty, 0) > 0
         ORDER BY sp.updated_at DESC
@@ -1063,35 +1147,63 @@ def get_deleted_transactions_last_7_days():
 
 def get_portfolio_summary():
     df = get_all_transactions(include_deleted=False)
-    if df.empty: return pd.DataFrame()
+    if df.empty:
+        return pd.DataFrame()
+
+    df = df.copy()
+    df['symbol_norm'] = df['symbol'].astype(str).str.strip().str.upper()
+    df['asset_category_norm'] = df['asset_category'].apply(_normalize_asset_category)
+    df['type_norm'] = df['type'].apply(_normalize_transaction_type)
+    df['quantity_num'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0.0)
+    df['price_num'] = pd.to_numeric(df['price'], errors='coerce').fillna(0.0)
+    df['fee_num'] = pd.to_numeric(df['fee'], errors='coerce').fillna(0.0)
+    df['multiplier_num'] = pd.to_numeric(df['multiplier'], errors='coerce').fillna(1).astype(int)
+    df['date_text'] = df['date'].astype(str).str.strip().str[:10]
 
     portfolio = {}
-    df_sorted = df.sort_values(by=['symbol', 'date', 'id'], ascending=[True, True, True])
+    df_sorted = df.sort_values(by=['symbol_norm', 'date_text', 'id'], ascending=[True, True, True])
 
     for _, row in df_sorted.iterrows():
-        sym = row['symbol']
-        if sym not in portfolio:
-            portfolio[sym] = {
-                'Symbol': sym, 'Raw Symbol': sym if row['asset_category'] == 'STOCK' else (
-                    row['symbol'].split()[0] if ' ' in row['symbol'] else row['symbol']),
-                'Quantity': 0.0, 'Total Cost': 0.0, 'Multiplier': row['multiplier'], 'Type': row['asset_category'],
+        category = row['asset_category_norm']
+        sym = row['symbol_norm']
+        expiration = str(row.get('expiration') or '').strip() if category == 'OPTION' else None
+        option_type = str(row.get('option_type') or '').strip().upper() if category == 'OPTION' else None
+        strike = row.get('strike') if category == 'OPTION' else None
+        symbol_key = ("STOCK", sym) if category == "STOCK" else (
+            "OPTION",
+            build_option_price_symbol(sym, expiration, option_type, strike),
+        )
+
+        if symbol_key not in portfolio:
+            display_symbol = sym if category == "STOCK" else build_option_price_symbol(sym, expiration, option_type, strike)
+            portfolio[symbol_key] = {
+                'Symbol': display_symbol,
+                'Raw Symbol': sym,
+                'Quantity': 0.0,
+                'Total Cost': 0.0,
+                'Multiplier': int(row['multiplier_num']) if int(row['multiplier_num']) > 0 else 1,
+                'Type': category,
                 'Days Held': 0, 'First Buy Date': None,
                 # 期权合约元数据（用于按合约查现价）
-                'expiration': row['expiration'] if row['asset_category'] == 'OPTION' else None,
-                'option_type': row['option_type'] if row['asset_category'] == 'OPTION' else None,
-                'strike': row['strike'] if row['asset_category'] == 'OPTION' else None,
+                'expiration': expiration if category == 'OPTION' else None,
+                'option_type': option_type if category == 'OPTION' else None,
+                'strike': strike if category == 'OPTION' else None,
             }
-        p = portfolio[sym]
-        qty = float(row['quantity'])
-        price = float(row['price'])
-        fee = float(row['fee'])
-        mult = int(row['multiplier'])
+        p = portfolio[symbol_key]
+        qty = _safe_float(row['quantity_num'])
+        price = _safe_float(row['price_num'])
+        fee = _safe_float(row['fee_num'])
+        mult = _safe_int(row['multiplier_num'], default=1) or 1
 
-        if row['type'] == 'BUY':
+        if row['type_norm'] == 'BUY':
             p['Total Cost'] += (qty * price * mult) + fee
             p['Quantity'] += qty
-            if p['First Buy Date'] is None: p['First Buy Date'] = datetime.strptime(row['date'], '%Y-%m-%d').date()
-        elif row['type'] == 'SELL':
+            if p['First Buy Date'] is None:
+                try:
+                    p['First Buy Date'] = datetime.strptime(row['date_text'], '%Y-%m-%d').date()
+                except ValueError:
+                    pass
+        elif row['type_norm'] == 'SELL':
             if p['Quantity'] > 0:
                 avg_cost = p['Total Cost'] / p['Quantity']
                 p['Total Cost'] -= avg_cost * qty
@@ -1101,16 +1213,16 @@ def get_portfolio_summary():
 
         # 若为期权，尽量补齐合约元数据，避免估值查不到对应期权现价
         if p['Type'] == 'OPTION':
-            if p.get('expiration') in (None, '') and row.get('expiration') not in (None, ''):
-                p['expiration'] = row.get('expiration')
-            if p.get('option_type') in (None, '') and row.get('option_type') not in (None, ''):
-                p['option_type'] = row.get('option_type')
-            if p.get('strike') in (None, '') and row.get('strike') not in (None, ''):
-                p['strike'] = row.get('strike')
+            if p.get('expiration') in (None, '') and expiration not in (None, ''):
+                p['expiration'] = expiration
+            if p.get('option_type') in (None, '') and option_type not in (None, ''):
+                p['option_type'] = option_type
+            if p.get('strike') in (None, '') and strike not in (None, ''):
+                p['strike'] = strike
 
     result = []
     today = date.today()
-    for sym, data in portfolio.items():
+    for data in portfolio.values():
         if data['Quantity'] > 0.001:
             data['Avg Cost'] = (data['Total Cost'] / data['Quantity'] / data['Multiplier']) if data[
                                                                                                    'Quantity'] > 0 else 0

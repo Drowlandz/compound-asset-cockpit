@@ -1,2 +1,1 @@
-"""Service layer for IM application."""
-
+"""Service layer for Compound Asset Cockpit application."""
