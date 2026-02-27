@@ -1646,15 +1646,15 @@ def _render_portfolio_section(privacy_mode, dark_mode, live_refresh_enabled):
             st.caption("持仓明细 (自动折算 USD)")
             display_df = pf_service.build_holdings_display_df(portfolio_df, ut.get_badge_info)
             display_table = display_df[
-                ["Symbol", "Sector", "Market Value", "Price", "Avg Cost", "Safety Margin", "Quantity", "Days Held", "Badge"]
+                ["Symbol", "Sector", "Market Value", "Avg Cost", "Price", "Safety Margin", "Quantity", "Days Held", "Badge"]
             ].copy()
 
             column_defs = [
                 {"key": "Symbol", "label": "代码", "width": 96, "sensitive": False},
                 {"key": "Sector", "label": "赛道", "width": 108, "sensitive": False},
                 {"key": "Market Value", "label": "市值", "width": 112, "sensitive": True},
-                {"key": "Price", "label": "现价", "width": 96, "sensitive": False},
                 {"key": "Avg Cost", "label": "买入价", "width": 98, "sensitive": False},
+                {"key": "Price", "label": "现价", "width": 96, "sensitive": False},
                 {"key": "Safety Margin", "label": "安全边际", "width": 220, "sensitive": False},
                 {"key": "Quantity", "label": "数量", "width": 82, "sensitive": True},
                 {"key": "Days Held", "label": "天数", "width": 74, "sensitive": False},
